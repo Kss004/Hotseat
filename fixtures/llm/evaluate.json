@@ -1,0 +1,51 @@
+{
+  "clarity_score": 8,
+  "clarity_critique": "Answers were direct and avoided marketing jargon, addressing security parameters without evasion.",
+  "clarity_evidence": [
+    "Our architecture isolates audit logs in customer-managed vaults"
+  ],
+  "confidence_score": 8,
+  "confidence_critique": "Maintained composure when challenged on SLA breach liabilities and stood firm on architectural guarantees.",
+  "confidence_evidence": [
+    "We back our tamper-evident logs with contractual financial SLA credits"
+  ],
+  "structure_score": 7,
+  "structure_critique": "Good use of the problem-impact-solution framework, though could have closed with a clearer next step.",
+  "structure_evidence": [
+    "Rather than asking you to replace existing systems, we plug into your current infrastructure"
+  ],
+  "relevance_score": 9,
+  "relevance_critique": "Exceptional alignment with Marcus's risk-averse posture, emphasizing compliance and immutable audit logs over front-end features.",
+  "relevance_evidence": [
+    "Every state change generates a cryptographically signed receipt"
+  ],
+  "executive_summary": "Strong performance that successfully navigated a cynical, compliance-focused Managing Director by leading with technical security rather than flashy sales promises.",
+  "turn_rewrites": [
+    {
+      "turn_number": 2,
+      "critique": "Initial pricing answer sounded defensive and didn't tie cost to risk reduction.",
+      "gold_standard": "Marcus, we price based on monitored event volume with a capped sandbox tier. Given your quarterly audit preparation cycle, our customers typically see payback within 45 days by eliminating manual evidence gathering."
+    },
+    {
+      "turn_number": 4,
+      "critique": "Answered implementation timeline without addressing IT review governance.",
+      "gold_standard": "We know IT risk review is your gate. We provide pre-completed SIG Core questionnaires, SOC2 Type II audit packages, and a zero-data-access deployment model so your security team can clear the sandbox in days rather than months."
+    }
+  ],
+  "cheat_sheet": {
+    "top_talking_points": [
+      "Lead with immutable audit lineage and FedRAMP-aligned controls.",
+      "Emphasize that the 60-day sandbox pilot operates in read-only mode with zero production risk.",
+      "Anchor ROI on auditor-hours saved and avoidance of regulatory examination findings."
+    ],
+    "defense_shields": [
+      "If pressed on data isolation: Emphasize customer-managed encryption keys and dedicated tenant partition options.",
+      "If pressed on budget: Offer the no-obligation sandbox pilot with milestone-based success criteria."
+    ],
+    "killer_questions": [
+      "How many engineering hours did your risk team spend assembling compliance evidence during your last regulatory audit?",
+      "What is the single biggest security blocker that typically stalls technology sandbox approvals at Apex Financial?",
+      "If we prove cryptographic tamper-resistance in the sandbox within 30 days, who else needs to be at the table to approve broader deployment?"
+    ]
+  }
+}

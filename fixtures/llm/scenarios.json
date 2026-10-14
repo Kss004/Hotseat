@@ -1,0 +1,72 @@
+{
+  "objections": [
+    {
+      "category": "Risk/Compliance/Security",
+      "objection": "How do you guarantee that our data is isolated in your multi-tenant environment, and what SLA penalty applies if an audit log is corrupted?",
+      "trigger": "Pitching cloud deployment or automated workflow engine.",
+      "probability": "high",
+      "severity": "critical",
+      "underlying_concern": "Regulatory fines and loss of banking license under FINRA/SEC oversight.",
+      "counter_strategy": "Detail customer-managed encryption keys (CMEK), isolated database tenants, and contractual financial SLA commitments."
+    },
+    {
+      "category": "ROI/Financial",
+      "objection": "We already have ServiceNow and custom internal scripts. What is the payback timeline to justify shifting headcount and budget?",
+      "trigger": "Discussing cost and licensing fees.",
+      "probability": "high",
+      "severity": "major",
+      "underlying_concern": "Unbudgeted enterprise spend with slow time-to-value.",
+      "counter_strategy": "Quantify hours saved on audit evidence preparation and highlight the 60-day sandbox pilot."
+    },
+    {
+      "category": "Implementation",
+      "objection": "Our IT risk review takes 6 months minimum. How do you propose completing a sandbox pilot without derailing our engineering team?",
+      "trigger": "Proposing a 60-day evaluation trial.",
+      "probability": "medium",
+      "severity": "major",
+      "underlying_concern": "Internal drag and engineering resource contention.",
+      "counter_strategy": "Show pre-packaged connectors that run in read-only sandbox mode requiring under 4 hours of setup."
+    },
+    {
+      "category": "Status Quo/Vendor",
+      "objection": "Why should I trust a younger technology vendor with core banking workflows when established legacy platforms exist?",
+      "trigger": "Competitor comparison or vendor evaluation.",
+      "probability": "medium",
+      "severity": "major",
+      "underlying_concern": "Vendor viability risk and reputation risk.",
+      "counter_strategy": "Cite tier-1 reference architectures and compliance certifications."
+    }
+  ],
+  "strategic_questions": [
+    {
+      "phase": "rapport",
+      "question": "Given your tenure guiding risk governance across tier-1 investment banks, how has the recent regulatory scrutiny on automated systems impacted your priority roadmap?",
+      "rationale": "Validates his expertise and anchors the discussion on regulatory compliance.",
+      "listen_for": "Specific regulatory frameworks or audit deadlines currently causing friction."
+    },
+    {
+      "phase": "challenge",
+      "question": "Most risk leaders tell us that while their internal scripts work, compiling evidence for examiners still takes weeks of manual reconciliation. How confident is your team in continuous evidence generation?",
+      "rationale": "Politely challenges the status quo without questioning his team's competence.",
+      "listen_for": "Admission of manual audit bottlenecks."
+    },
+    {
+      "phase": "risk_uncovery",
+      "question": "If an unexpected audit were triggered tomorrow regarding data lineage across trading workflows, where do you anticipate the biggest vulnerability would be?",
+      "rationale": "Uncovers implicit vulnerabilities and specific operational risks.",
+      "listen_for": "Uncertainty around audit trail coverage or third-party integrations."
+    },
+    {
+      "phase": "decision_criteria",
+      "question": "What architectural and security criteria must a solution meet for your committee to authorize a 60-day sandbox pilot?",
+      "rationale": "Clarifies the precise gating requirements for the meeting goal.",
+      "listen_for": "SOC2, single-tenant options, or specific security review milestones."
+    },
+    {
+      "phase": "decision_criteria",
+      "question": "Who besides your risk team would need to sign off on the telemetry and log ingestion parameters before any trial begins?",
+      "rationale": "Maps the decision hierarchy and stakeholder landscape.",
+      "listen_for": "CISO, SecOps, or infrastructure engineering involvement."
+    }
+  ]
+}

@@ -1,0 +1,463 @@
+"use client";
+
+import React, { useState } from "react";
+import type { Session, PersonaRecord } from "@/types";
+
+interface IngestionFormProps {
+  onSuccess: (session: Session, persona: PersonaRecord) => void;
+}
+
+export function IngestionForm({ onSuccess }: IngestionFormProps) {
+  const [profileText, setProfileText] = useState("");
+  const [linkedInUrl, setLinkedInUrl] = useState("");
+  const [roleHint, setRoleHint] = useState("");
+  const [industryHint, setIndustryHint] = useState("");
+  const [tenureHint, setTenureHint] = useState("");
+  const [prioritiesHint, setPrioritiesHint] = useState("");
+
+  const [productSummary, setProductSummary] = useState("");
+  const [meetingGoal, setMeetingGoal] = useState("");
+  const [meetingType, setMeetingType] = useState("Enterprise Sales Pitch");
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [difficulty, setDifficulty] = useState<"warmup" | "realistic" | "hostile">("realistic");
+
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Load Seeded PRD Fixture: Marcus Vance, MD
+  const loadSeededFixture = async () => {
+    try {
+      const res = await fetch("/fixtures/marcus-vance.json");
+      let data;
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        // Fallback embedded fixture if fetch fails
+        data = {
+          title: "Enterprise Workflow Automation Pitch - Apex Financial",
+          target_url: "https://www.linkedin.com/in/marcus-vance-risk-apex",
+          raw_input:
+            "Marcus Vance is Managing Director of Operational Risk & Compliance at Apex Financial Capital, where he oversees regulatory compliance, internal controls, and enterprise technology risk across retail and institutional trading divisions. Prior to Apex Financial, Marcus spent 11 years at Deloitte Risk Advisory leading SOX compliance, FedRAMP assessments, and Basel III implementation for global investment banks. He holds an MBA from Wharton and a B.S. in Accounting & Information Systems. Marcus is widely known in the firm for his zero-tolerance policy on security oversights, data governance ambiguity, or unvetted third-party integrations. He strongly favors verifiable SLA penalties, on-prem or isolated tenant architectures, and immutable audit logs over flashy front-end features.",
+          hints: {
+            role: "Managing Director, Operational Risk & Compliance",
+            industry: "Financial Services / Banking",
+            tenure: "18+ years across risk advisory and enterprise banking",
+            known_priorities: "SOC2 Type II, FedRAMP, data lineage, operational resiliency, immutable audit logs",
+          },
+          meeting_context: {
+            product_summary:
+              "AutoFlow Enterprise: An enterprise-grade workflow automation and audit orchestration platform. Features automated evidence collection, continuous SOC2/ISO27001 policy enforcement, fine-grained RBAC, and tamper-evident cryptographic audit trails.",
+            goal: "Secure an initial 60-day sandbox pilot within the compliance and operational risk department.",
+            meeting_type: "Enterprise Sales Pitch",
+            duration_minutes: 30,
+          },
+          difficulty: "realistic",
+        };
+      }
+
+      setProfileText(data.raw_input);
+      setLinkedInUrl(data.target_url || "");
+      setRoleHint(data.hints?.role || "");
+      setIndustryHint(data.hints?.industry || "");
+      setTenureHint(data.hints?.tenure || "");
+      setPrioritiesHint(data.hints?.known_priorities || "");
+      setProductSummary(data.meeting_context.product_summary);
+      setMeetingGoal(data.meeting_context.goal);
+      setMeetingType(data.meeting_context.meeting_type);
+      setDurationMinutes(data.meeting_context.duration_minutes);
+      setDifficulty(data.difficulty || "realistic");
+      setScrapeError(null);
+      setFormError(null);
+    } catch (err) {
+      console.error("Failed to load fixture:", err);
+    }
+  };
+
+  // Best-effort LinkedIn scrape
+  const handleScrapeLinkedIn = async () => {
+    if (!linkedInUrl.trim()) return;
+    setIsScraping(true);
+    setScrapeError(null);
+
+    try {
+      const res = await fetch("/api/ingest/linkedin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: linkedInUrl.trim() }),
+      });
+
+      const data = await res.json();
+      if (data.ok && data.text) {
+        setProfileText((prev) => {
+          if (!prev.trim()) return data.text;
+          return `${prev}\n\n[Scraped Profile Details]:\n${data.text}`;
+        });
+      } else {
+        setScrapeError(data.reason || "Couldn't read this profile. Paste the text instead.");
+      }
+    } catch {
+      setScrapeError("Couldn't read this profile. Paste the text instead.");
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    let combinedRawInput = profileText.trim();
+    if (roleHint || industryHint || tenureHint || prioritiesHint) {
+      combinedRawInput += `\n\n[Additional Context Notes]:\n`;
+      if (roleHint) combinedRawInput += `- Role: ${roleHint}\n`;
+      if (industryHint) combinedRawInput += `- Industry: ${industryHint}\n`;
+      if (tenureHint) combinedRawInput += `- Tenure: ${tenureHint}\n`;
+      if (prioritiesHint) combinedRawInput += `- Known Priorities: ${prioritiesHint}\n`;
+    }
+
+    if (combinedRawInput.length < 80) {
+      setFormError("Profile context must be at least 80 characters long.");
+      return;
+    }
+
+    if (!productSummary.trim() || !meetingGoal.trim()) {
+      setFormError("Product summary and meeting goal are required.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // 1. Create Session
+      const sessionRes = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Prep: ${roleHint || "Executive Counterpart"}`,
+          target_url: linkedInUrl.trim() || null,
+          raw_input: combinedRawInput,
+          meeting_context: {
+            product_summary: productSummary.trim(),
+            goal: meetingGoal.trim(),
+            meeting_type: meetingType,
+            duration_minutes: durationMinutes,
+          },
+          difficulty,
+        }),
+      });
+
+      const sessionData = await sessionRes.json();
+      if (!sessionRes.ok) {
+        throw new Error(sessionData.message || "Failed to create session");
+      }
+
+      const session = sessionData.session;
+
+      // 2. Generate Persona
+      const personaRes = await fetch(`/api/sessions/${session.id}/persona`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const personaData = await personaRes.json();
+      if (!personaRes.ok) {
+        throw new Error(personaData.message || "Failed to generate persona");
+      }
+
+      onSuccess(session, personaData.persona);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error generating persona";
+      setFormError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const charCount = profileText.length;
+
+  return (
+    <div className="glass-card" style={{ padding: "2rem", maxWidth: "900px", margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
+        <div>
+          <h2 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.25rem" }}>
+            Target Ingestion & Meeting Context
+          </h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+            Paste the counterpart&apos;s background and specify your meeting parameters.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={loadSeededFixture}
+          className="btn btn-secondary"
+          id="btn-load-md-fixture"
+          style={{ fontSize: "0.8rem", padding: "0.5rem 0.9rem", border: "1px solid var(--accent-gold)" }}
+        >
+          ⚡ Load Marcus Vance (MD Benchmark)
+        </button>
+      </div>
+
+      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1.5rem", fontStyle: "italic" }}>
+        * The Marcus Vance profile and Apex Financial Capital are fictional entities created for benchmark simulation testing.
+      </div>
+
+      {formError && (
+        <div
+          style={{
+            background: "rgba(244, 63, 94, 0.15)",
+            border: "1px solid var(--accent-rose)",
+            color: "#fecdd3",
+            padding: "0.75rem 1rem",
+            borderRadius: "var(--radius-md)",
+            marginBottom: "1.5rem",
+            fontSize: "0.9rem",
+          }}
+        >
+          {formError}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit}>
+        {/* Section 1: Counterpart Background */}
+        <div style={{ marginBottom: "2rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+            <label className="form-label" htmlFor="profile-text">
+              Counterpart Background / Bio / Resume Text <span style={{ color: "var(--accent-rose)" }}>*</span>
+            </label>
+            <span style={{ fontSize: "0.75rem", color: charCount >= 80 ? "var(--accent-emerald)" : "var(--accent-amber)" }}>
+              {charCount} / 80 min chars
+            </span>
+          </div>
+
+          <textarea
+            id="profile-text"
+            rows={5}
+            className="form-control"
+            placeholder="Paste their LinkedIn summary, career history, previous advisory roles, executive priorities, or notes..."
+            value={profileText}
+            onChange={(e) => setProfileText(e.target.value)}
+            style={{ width: "100%", resize: "vertical" }}
+            required
+          />
+
+          {/* Optional LinkedIn URL */}
+          <div style={{ marginTop: "1rem" }}>
+            <label className="form-label" htmlFor="linkedin-url">
+              LinkedIn Profile URL (Optional Best-Effort Fetch)
+            </label>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                id="linkedin-url"
+                type="url"
+                className="form-control"
+                placeholder="https://www.linkedin.com/in/username"
+                value={linkedInUrl}
+                onChange={(e) => setLinkedInUrl(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary"
+                id="btn-fetch-linkedin"
+                onClick={handleScrapeLinkedIn}
+                disabled={isScraping || !linkedInUrl.trim()}
+              >
+                {isScraping ? "Fetching..." : "Fetch Snippet"}
+              </button>
+            </div>
+
+            {scrapeError && (
+              <div style={{ color: "var(--accent-amber)", fontSize: "0.8rem", marginTop: "0.4rem" }}>
+                ⚠️ {scrapeError}
+              </div>
+            )}
+          </div>
+
+          {/* Context Hints Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+            <div>
+              <label className="form-label" htmlFor="role-hint">Role / Seniority (Optional)</label>
+              <input
+                id="role-hint"
+                type="text"
+                className="form-control"
+                placeholder="e.g. Managing Director, Operational Risk"
+                value={roleHint}
+                onChange={(e) => setRoleHint(e.target.value)}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label className="form-label" htmlFor="industry-hint">Industry / Domain (Optional)</label>
+              <input
+                id="industry-hint"
+                type="text"
+                className="form-control"
+                placeholder="e.g. Tier-1 Financial Services"
+                value={industryHint}
+                onChange={(e) => setIndustryHint(e.target.value)}
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: Meeting Context */}
+        <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "1.5rem", marginBottom: "2rem" }}>
+          <h3 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: "1rem", color: "var(--text-gold)" }}>
+            Meeting Agenda & Stakes
+          </h3>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="product-summary">
+              Product / Offering Summary <span style={{ color: "var(--accent-rose)" }}>*</span>
+            </label>
+            <textarea
+              id="product-summary"
+              rows={3}
+              className="form-control"
+              placeholder="What are you pitching? Mention security certifications, deployment models, and core value prop..."
+              value={productSummary}
+              onChange={(e) => setProductSummary(e.target.value)}
+              required
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem" }}>
+            <div className="form-group">
+              <label className="form-label" htmlFor="meeting-goal">
+                Specific Meeting Goal <span style={{ color: "var(--accent-rose)" }}>*</span>
+              </label>
+              <input
+                id="meeting-goal"
+                type="text"
+                className="form-control"
+                placeholder="e.g. Secure a 60-day sandbox pilot with the risk committee"
+                value={meetingGoal}
+                onChange={(e) => setMeetingGoal(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="duration-minutes">
+                Duration (Minutes)
+              </label>
+              <select
+                id="duration-minutes"
+                className="form-control"
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              >
+                <option value={15}>15 min (Elevator/Briefing)</option>
+                <option value={30}>30 min (Standard Pitch)</option>
+                <option value={45}>45 min (Executive Review)</option>
+                <option value={60}>60 min (Deep Dive)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Difficulty Selector */}
+          <div className="form-group" style={{ marginTop: "0.5rem" }}>
+            <label className="form-label">Simulation Sparring Difficulty</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginTop: "0.25rem" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.6rem 0.8rem",
+                  borderRadius: "var(--radius-md)",
+                  border: `1px solid ${difficulty === "warmup" ? "var(--accent-blue)" : "var(--border-subtle)"}`,
+                  background: difficulty === "warmup" ? "rgba(59, 130, 246, 0.1)" : "var(--bg-elevated)",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="difficulty"
+                  value="warmup"
+                  checked={difficulty === "warmup"}
+                  onChange={() => setDifficulty("warmup")}
+                />
+                <div>
+                  <div style={{ fontWeight: 600 }}>Warm-up</div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Supportive, forgiving</div>
+                </div>
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.6rem 0.8rem",
+                  borderRadius: "var(--radius-md)",
+                  border: `1px solid ${difficulty === "realistic" ? "var(--accent-gold)" : "var(--border-subtle)"}`,
+                  background: difficulty === "realistic" ? "rgba(229, 169, 60, 0.1)" : "var(--bg-elevated)",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="difficulty"
+                  value="realistic"
+                  checked={difficulty === "realistic"}
+                  onChange={() => setDifficulty("realistic")}
+                />
+                <div>
+                  <div style={{ fontWeight: 600 }}>Realistic</div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Sharp, cynical, pragmatic</div>
+                </div>
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.6rem 0.8rem",
+                  borderRadius: "var(--radius-md)",
+                  border: `1px solid ${difficulty === "hostile" ? "var(--accent-rose)" : "var(--border-subtle)"}`,
+                  background: difficulty === "hostile" ? "rgba(244, 63, 94, 0.1)" : "var(--bg-elevated)",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="difficulty"
+                  value="hostile"
+                  checked={difficulty === "hostile"}
+                  onChange={() => setDifficulty("hostile")}
+                />
+                <div>
+                  <div style={{ fontWeight: 600 }}>Hostile</div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>High pressure, impatient</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Submit Button */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            id="btn-generate-persona"
+            disabled={isSubmitting || charCount < 80}
+            style={{ minWidth: "220px", padding: "0.85rem 1.5rem" }}
+          >
+            {isSubmitting ? "Synthesizing Persona..." : "Generate Persona Card →"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

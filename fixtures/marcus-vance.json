@@ -1,0 +1,19 @@
+{
+  "title": "Enterprise Workflow Automation Pitch - Apex Financial",
+  "target_url": "https://www.linkedin.com/in/marcus-vance-risk-apex",
+  "raw_input": "Marcus Vance is Managing Director of Operational Risk & Compliance at Apex Financial Capital, where he oversees regulatory compliance, internal controls, and enterprise technology risk across retail and institutional trading divisions. Prior to Apex Financial, Marcus spent 11 years at Deloitte Risk Advisory leading SOX compliance, FedRAMP assessments, and Basel III implementation for global investment banks. He holds an MBA from Wharton and a B.S. in Accounting & Information Systems. Marcus is widely known in the firm for his zero-tolerance policy on security oversights, data governance ambiguity, or unvetted third-party integrations. He strongly favors verifiable SLA penalties, on-prem or isolated tenant architectures, and immutable audit logs over flashy front-end features.",
+  "hints": {
+    "role": "Managing Director, Operational Risk & Compliance",
+    "industry": "Financial Services / Banking",
+    "tenure": "18+ years across risk advisory and enterprise banking",
+    "known_priorities": "SOC2 Type II, FedRAMP, data lineage, operational resiliency, immutable audit logs"
+  },
+  "meeting_context": {
+    "product_summary": "AutoFlow Enterprise: An enterprise-grade workflow automation and audit orchestration platform. Features automated evidence collection, continuous SOC2/ISO27001 policy enforcement, fine-grained RBAC, and tamper-evident cryptographic audit trails.",
+    "goal": "Secure an initial 60-day sandbox pilot within the compliance and operational risk department.",
+    "meeting_type": "Enterprise Sales Pitch",
+    "duration_minutes": 30
+  },
+  "difficulty": "realistic",
+  "disclaimer": "Fictional persona and company created solely for benchmark preparation and simulation testing."
+}

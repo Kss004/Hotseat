@@ -1,0 +1,20 @@
+{
+  "name": "Marcus Vance",
+  "title": "Managing Director of Operational Risk & Compliance",
+  "company": "Apex Financial Capital",
+  "background": "Former Deloitte Risk Advisory partner with 18 years in banking governance, SOX, and regulatory compliance.",
+  "risk_posture": "risk_averse",
+  "technical_depth": "high",
+  "business_priorities": [
+    "Zero-tolerance security controls and FedRAMP/SOC2 compliance",
+    "Cryptographic data lineage and immutable audit logs",
+    "Clear SLA penalties and vendor operational resiliency"
+  ],
+  "hot_buttons": [
+    "Vague buzzwords without architectural depth",
+    "Multi-tenant data isolation ambiguity",
+    "Unquantified ROI claims"
+  ],
+  "conversational_style": "Direct, skeptical, deeply analytical, and focused on regulatory liability.",
+  "uncertain_fields": []
+}

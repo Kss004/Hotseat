@@ -1,0 +1,101 @@
+export interface VoiceSupport {
+  hasSpeechRecognition: boolean;
+  hasSpeechSynthesis: boolean;
+}
+
+export function detectVoiceSupport(): VoiceSupport {
+  if (typeof window === "undefined") {
+    return { hasSpeechRecognition: false, hasSpeechSynthesis: false };
+  }
+
+  const hasSpeechRecognition = Boolean(
+    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  );
+  const hasSpeechSynthesis = Boolean("speechSynthesis" in window);
+
+  return { hasSpeechRecognition, hasSpeechSynthesis };
+}
+
+export function createSpeechRecognizer(params: {
+  onTranscript: (text: string, isFinal: boolean) => void;
+  onError: (err: string) => void;
+  onEnd: () => void;
+}) {
+  if (typeof window === "undefined") return null;
+
+  const SpeechRecognition =
+    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+  if (!SpeechRecognition) return null;
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "en-US";
+
+  recognition.onresult = (event: any) => {
+    let finalTranscript = "";
+    let interimTranscript = "";
+
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript;
+      } else {
+        interimTranscript += event.results[i][0].transcript;
+      }
+    }
+
+    if (finalTranscript) {
+      params.onTranscript(finalTranscript, true);
+    } else if (interimTranscript) {
+      params.onTranscript(interimTranscript, false);
+    }
+  };
+
+  recognition.onerror = (event: any) => {
+    params.onError(event.error || "Speech recognition error");
+  };
+
+  recognition.onend = () => {
+    params.onEnd();
+  };
+
+  return recognition;
+}
+
+export function speakPersonaReply(text: string, onEnd?: () => void) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
+
+  // Clean text from markdown or URLs for natural speech
+  const cleanText = text.replace(/[*_#`[\]()]/g, "").trim();
+  if (!cleanText) return;
+
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  utterance.rate = 1.02;
+  utterance.pitch = 0.95; // Authoritative executive tone
+
+  // Attempt to select an executive natural English voice
+  const voices = window.speechSynthesis.getVoices();
+  const executiveVoice =
+    voices.find((v) => v.lang.startsWith("en") && (v.name.includes("Natural") || v.name.includes("Premium") || v.name.includes("Google"))) ||
+    voices.find((v) => v.lang.startsWith("en"));
+
+  if (executiveVoice) {
+    utterance.voice = executiveVoice;
+  }
+
+  if (onEnd) {
+    utterance.onend = onEnd;
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
+
+export function stopSpeaking() {
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+}
