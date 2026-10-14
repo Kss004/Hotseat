@@ -10,7 +10,7 @@ export interface CompleteOptions<T> {
   purpose: LLMPurpose;
   system: string;
   user: string;
-  schema: z.ZodType<T, any, any>;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   promptVersion: string;
   sessionId?: string | null;
 }

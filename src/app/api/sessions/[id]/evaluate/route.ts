@@ -11,6 +11,9 @@ import {
   type EvaluationOutput,
   type PersonaData,
   type Turn,
+  type RiskPosture,
+  type TechnicalDepth,
+  type Stance,
 } from "@/types";
 import { filterValidQuotes } from "@/lib/quotes";
 import { toErrorResponse, AppError } from "@/lib/errors";
@@ -45,8 +48,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       title: p.title as string,
       company: p.company as string,
       background: p.background as string,
-      risk_posture: p.risk_posture as any,
-      technical_depth: p.technical_depth as any,
+      risk_posture: p.risk_posture as RiskPosture,
+      technical_depth: p.technical_depth as TechnicalDepth,
       business_priorities: JSON.parse(p.business_priorities as string),
       hot_buttons: JSON.parse(p.hot_buttons as string),
       conversational_style: p.conversational_style as string,
@@ -66,7 +69,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       turn_number: Number(r.turn_number),
       role: r.role as "user" | "assistant",
       content: r.content as string,
-      stance: (r.stance as any) || null,
+      stance: (r.stance as Stance | null) || null,
       created_at: r.created_at as string,
     }));
 
@@ -93,7 +96,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       sessionId,
     });
 
-    let evalData = result.data;
+    const evalData = result.data;
 
     // 5. Code Post-Validation: Verify evidence quotes are substrings of user turns
     const userTurnTexts = userTurns.map((t) => t.content);
@@ -134,6 +137,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       .filter((rw): rw is NonNullable<typeof rw> => rw !== null);
 
     // If rewrites didn't match turn numbers, map to existing user turns
+    let finalRewrites: Array<{ turn_number: number; user_said: string; critique: string; gold_standard: string }> = [];
     if (validatedRewrites.length < 2 && userTurns.length >= 2) {
       const fallbackRw1 = {
         turn_number: userTurns[0].turn_number,
@@ -147,9 +151,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         critique: evalData.turn_rewrites[1]?.critique || "Did not address regulatory examination risks directly.",
         gold_standard: evalData.turn_rewrites[1]?.gold_standard || "Our platform features dedicated single-tenant database partitions, CMEK encryption, and contractual SLA penalties to protect against regulatory liabilities.",
       };
-      evalData.turn_rewrites = [fallbackRw1, fallbackRw2] as any;
+      finalRewrites = [fallbackRw1, fallbackRw2];
     } else {
-      evalData.turn_rewrites = validatedRewrites as any;
+      finalRewrites = validatedRewrites;
     }
 
     // 7. Overall score computed strictly in code as mean of 4 scores
@@ -208,7 +212,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         JSON.stringify(evalData.relevance_evidence),
         overallScore,
         evalData.executive_summary,
-        JSON.stringify(evalData.turn_rewrites),
+        JSON.stringify(finalRewrites),
         JSON.stringify(evalData.cheat_sheet),
       ],
     });
@@ -225,6 +229,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         id: evaluationId,
         session_id: sessionId,
         ...evalData,
+        turn_rewrites: finalRewrites,
         overall_score: overallScore,
       },
       provider: result.provider,

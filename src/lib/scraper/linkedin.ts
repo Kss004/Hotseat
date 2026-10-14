@@ -1,5 +1,3 @@
-import { AppError } from "@/lib/errors";
-
 export interface LinkedInScrapeResult {
   ok: boolean;
   text?: string;
@@ -90,7 +88,7 @@ export async function scrapeLinkedInMetadata(inputUrl: string): Promise<LinkedIn
       ok: true,
       text: combined,
     };
-  } catch (err: unknown) {
+  } catch {
     clearTimeout(timeoutId);
     return {
       ok: false,

@@ -37,7 +37,7 @@ export function SparringArena({
   const [isListening, setIsListening] = useState(false);
   const [isVoiceOutputEnabled, setIsVoiceOutputEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const recognizerRef = useRef<any>(null);
+  const recognizerRef = useRef<{ stop: () => void; abort: () => void; start: () => void } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -298,6 +298,7 @@ export function SparringArena({
             background: currentStanceMeta.bg,
             border: `1px solid ${currentStanceMeta.color}`,
           }}
+          title={stanceReasoning || "Current persona stance"}
         >
           <span style={{ fontSize: "1.1rem" }}>{currentStanceMeta.icon}</span>
           <div>
@@ -306,6 +307,11 @@ export function SparringArena({
             </div>
             <div style={{ fontSize: "0.9rem", fontWeight: 700, color: currentStanceMeta.color }}>
               {currentStanceMeta.label}
+              {stanceReasoning && (
+                <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "var(--text-secondary)", marginLeft: "0.4rem" }}>
+                  • {stanceReasoning.slice(0, 45)}...
+                </span>
+              )}
             </div>
           </div>
         </div>

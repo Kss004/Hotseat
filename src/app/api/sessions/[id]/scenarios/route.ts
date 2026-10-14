@@ -6,7 +6,13 @@ import {
   getScenariosUserPrompt,
   SCENARIOS_PROMPT_VERSION,
 } from "@/lib/ai/prompts/scenarios";
-import { scenariosOutputSchema, type ScenariosOutput, type PersonaData } from "@/types";
+import {
+  scenariosOutputSchema,
+  type ScenariosOutput,
+  type PersonaData,
+  type RiskPosture,
+  type TechnicalDepth,
+} from "@/types";
 import { toErrorResponse, AppError } from "@/lib/errors";
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
@@ -44,8 +50,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       title: p.title as string,
       company: p.company as string,
       background: p.background as string,
-      risk_posture: p.risk_posture as any,
-      technical_depth: p.technical_depth as any,
+      risk_posture: p.risk_posture as RiskPosture,
+      technical_depth: p.technical_depth as TechnicalDepth,
       business_priorities: JSON.parse(p.business_priorities as string),
       hot_buttons: JSON.parse(p.hot_buttons as string),
       conversational_style: p.conversational_style as string,

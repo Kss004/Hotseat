@@ -2,7 +2,14 @@ import { getDb } from "@/lib/db";
 import { getLLMRouter } from "@/lib/ai/router";
 import { getChatSystemPrompt, CHAT_PROMPT_VERSION } from "@/lib/ai/prompts/chat";
 import { getStanceSystemPrompt, getStanceUserPrompt, STANCE_PROMPT_VERSION } from "@/lib/ai/prompts/stance";
-import { stanceOutputSchema, type PersonaData, type Stance, type LLMCallStatus } from "@/types";
+import {
+  stanceOutputSchema,
+  type PersonaData,
+  type Stance,
+  type Difficulty,
+  type RiskPosture,
+  type TechnicalDepth,
+} from "@/types";
 import { AppError } from "@/lib/errors";
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
@@ -35,7 +42,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
     const s = sessionRes.rows[0];
     const meetingContext = JSON.parse(s.meeting_context as string);
-    const difficulty = (s.difficulty as any) || "realistic";
+    const difficulty = (s.difficulty as Difficulty) || "realistic";
     const maxTurns = Number(s.max_turns) || 10;
 
     // 2. Count existing user turns to enforce TURN_CAP
@@ -95,8 +102,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       title: p.title as string,
       company: p.company as string,
       background: p.background as string,
-      risk_posture: p.risk_posture as any,
-      technical_depth: p.technical_depth as any,
+      risk_posture: p.risk_posture as RiskPosture,
+      technical_depth: p.technical_depth as TechnicalDepth,
       business_priorities: JSON.parse(p.business_priorities as string),
       hot_buttons: JSON.parse(p.hot_buttons as string),
       conversational_style: p.conversational_style as string,

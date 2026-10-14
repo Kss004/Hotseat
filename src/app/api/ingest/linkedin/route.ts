@@ -15,7 +15,7 @@ export async function POST(req: Request) {
 
     const result = await scrapeLinkedInMetadata(url);
     return NextResponse.json(result);
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       { ok: false, reason: "Couldn't read this profile. Paste the text instead." },
       { status: 500 }
