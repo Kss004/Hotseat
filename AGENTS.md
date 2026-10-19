@@ -6,6 +6,8 @@
 - **Strict schema validation**: Every LLM output is validated with Zod before touching the database or the UI. On failure, run exactly one repair retry with the validation error.
 - **Do not advance steps prematurely**: Do not start a step until the previous step's validation criteria are verified and marked complete in `PROGRESS.md`.
 
+- **No AI attribution**: Do not add `Co-Authored-By`, `Claude-Session`, or "Generated with Claude Code" lines to commit messages or PR descriptions.
+
 ## 2. Technical Standards
 - **Framework**: Next.js App Router with TypeScript strict mode.
 - **Styling**: Vanilla CSS design system with CSS custom properties (dark executive theme) or CSS Modules. **No Tailwind**.
