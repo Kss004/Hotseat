@@ -113,6 +113,24 @@ describe("Live company research (Tavily) in the briefing", () => {
     expect(other.reason).toMatch(/Daily research limit/);
   });
 
+  it("5b. Findings stored before the people/job filter are cleaned when read from the cache", async () => {
+    const db = await getReadyDb();
+    const stale = [
+      { title: "Apex Financial Capital inquiry", url: "https://news.example.com/a", source: "news.example.com", snippet: "x" },
+      { title: "Jane Doe - Apex Financial Capital", url: "https://uk.linkedin.com/in/jane-doe", source: "uk.linkedin.com", snippet: "x" },
+      { title: "Risk Director at Apex Financial Capital", url: "https://search.jobs.apex.com/job/1", source: "search.jobs.apex.com", snippet: "x" },
+    ];
+    await db.execute({
+      sql: `INSERT INTO research_cache (company_key, queries, findings, fetched_at) VALUES (?, '[]', ?, ?)`,
+      args: ["apex financial capital", JSON.stringify(stale), Math.floor(Date.now() / 1000)],
+    });
+
+    const sessionId = await createSession();
+    const result = await researchForSession(sessionId, persona, meeting);
+    expect(result.cached).toBe(true);
+    expect(result.findings.map((f) => f.url)).toEqual(["https://news.example.com/a"]);
+  });
+
   it("6. A Tavily outage is recorded as unavailable and nothing is cached", async () => {
     process.env.LLM_MODE = "live";
     resetEnvCache();

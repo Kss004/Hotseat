@@ -2,6 +2,7 @@ import { getReadyDb } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { tryConsumeQuota } from "@/lib/rateLimit";
 import {
+  isExcludedResult,
   isPlaceholderCompany,
   normalizeCompanyKey,
   researchCompany,
@@ -14,6 +15,20 @@ const DAY_SEC = 86400;
 
 const OFF_REASON = "Live research was turned off for this session.";
 const DAILY_LIMIT_REASON = "Daily research limit reached, so this briefing was generated without live research.";
+
+/**
+ * Re-applies the people/job filter to stored findings, so results saved before a filter change (in the cache or a
+ * session) are never shown or sent to the model.
+ */
+function allowedFindings(value: unknown): ResearchRecord["findings"] {
+  return parseList<ResearchRecord["findings"][number]>(value).filter((f) => {
+    try {
+      return !isExcludedResult(new URL(f.url));
+    } catch {
+      return false;
+    }
+  });
+}
 
 function parseList<T>(value: unknown): T[] {
   try {
@@ -36,7 +51,7 @@ async function readCache(companyKey: string): Promise<ResearchRecord | null> {
     status: "ok",
     reason: (row.reason as string | null) || undefined,
     queries: parseList(row.queries),
-    findings: parseList(row.findings),
+    findings: allowedFindings(row.findings),
     cached: true,
   };
 }
@@ -148,6 +163,6 @@ export async function loadSessionResearch(sessionId: string): Promise<ResearchRe
     status: row.status as ResearchRecord["status"],
     reason: (row.reason as string | null) || undefined,
     queries: parseList(row.queries),
-    findings: parseList(row.findings),
+    findings: allowedFindings(row.findings),
   };
 }
