@@ -51,7 +51,31 @@ const PLACEHOLDER_NAMES = [
   "confidential", "various", "self-employed", "freelance",
 ];
 
-const FILLER_WORDS = new Set(["of", "and", "the", "a", "an", "&", "for", "in", "at", "to"]);
+/**
+ * Research is about the company, never individuals: social networks, people-search sites and job boards are
+ * excluded (sent to Tavily, and enforced again here). Matches the domain and its subdomains.
+ */
+export const EXCLUDED_DOMAINS = [
+  "linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "tiktok.com", "threads.net",
+  "reddit.com", "quora.com", "pinterest.com",
+  "rocketreach.co", "zoominfo.com", "signalhire.com", "contactout.com", "theorg.com", "apollo.io", "lusha.com",
+  "crunchbase.com/person",
+  "indeed.com", "glassdoor.com", "glassdoor.co.uk", "efinancialcareers.com", "ziprecruiter.com", "monster.com",
+  "reed.co.uk", "totaljobs.com", "naukri.com", "simplyhired.com", "workday.com", "myworkdayjobs.com",
+  "greenhouse.io", "lever.co", "smartrecruiters.com",
+];
+
+/** Job listings and people profiles on otherwise-allowed sites (e.g. jobs.example.com, /careers/). */
+const PERSON_OR_JOB_PATH = /\/(in|pub|people|profile|profiles|person|jobs?|careers?|vacanc(?:y|ies))(\/|$)/i;
+
+/** True for results from excluded domains, job subdomains, or profile/job pages. */
+export function isExcludedResult(url: URL): boolean {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const hostAndPath = `${host}${url.pathname.toLowerCase()}`;
+  if (EXCLUDED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`) || hostAndPath.startsWith(d))) return true;
+  if (/^(jobs|careers|search\.jobs)\./.test(host)) return true;
+  return PERSON_OR_JOB_PATH.test(url.pathname);
+}
 
 /** ASCII punctuation, replaced with spaces before comparing text. */
 const PUNCTUATION = /[!-\/:-@\[-`{-~]/g;
@@ -91,19 +115,13 @@ export function isPlaceholderCompany(company: string, uncertainFields?: string[]
   return /\bunknown\b/.test(squash(trimmed));
 }
 
-/** Two search queries: company news, and company plus key title words with challenges and regulation. */
+/**
+ * Two search queries about the company only: recent news, and its regulatory and risk situation. The person's job
+ * title is deliberately left out: it makes search engines return individuals' profiles.
+ */
 export function buildQueries(input: ResearchInput): string[] {
   const company = input.company.replace(/"/g, "").trim();
-  const titleWords = input.title
-    .replace(PUNCTUATION, " ")
-    .split(/\s+/)
-    .filter((word) => word && !FILLER_WORDS.has(word.toLowerCase()))
-    .slice(0, 4);
-  const titleTerms = titleWords.join(" ");
-  const second = titleTerms
-    ? `"${company}" ${titleTerms} challenges regulation`
-    : `"${company}" challenges regulation`;
-  return [`"${company}" news`, second];
+  return [`"${company}" news`, `"${company}" regulation compliance risk`];
 }
 
 class HttpStatusError extends Error {
@@ -152,7 +170,7 @@ function toFindings(raw: unknown[], company: string): ResearchFinding[] {
     if (!item || typeof item !== "object") continue;
     const entry = item as Record<string, unknown>;
     const url = typeof entry.url === "string" ? parseHttpUrl(entry.url) : null;
-    if (!url) continue;
+    if (!url || isExcludedResult(url)) continue;
 
     const title = collapse(typeof entry.title === "string" ? entry.title : "");
     const content = collapse(typeof entry.content === "string" ? entry.content : "");
@@ -214,6 +232,8 @@ async function runSearch(
         search_depth: "basic",
         max_results: RESULTS_PER_QUERY,
         include_answer: false,
+        // Bare domains only (Tavily takes domains, not paths); paths are filtered in toFindings
+        exclude_domains: EXCLUDED_DOMAINS.filter((d) => !d.includes("/")),
       }),
       signal: controller.signal,
     });

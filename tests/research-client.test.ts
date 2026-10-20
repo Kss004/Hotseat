@@ -109,14 +109,14 @@ describe("researchCompany live requests", () => {
       max_results: 4,
     });
     expect(bodyOf(calls[1].init)).toMatchObject({
-      query: `"Apex Financial Capital" VP Compliance Risk challenges regulation`,
+      query: `"Apex Financial Capital" regulation compliance risk`,
       topic: "general",
       search_depth: "basic",
       max_results: 4,
     });
     expect(result.queries).toEqual([
       `"Apex Financial Capital" news`,
-      `"Apex Financial Capital" VP Compliance Risk challenges regulation`,
+      `"Apex Financial Capital" regulation compliance risk`,
     ]);
   });
 
@@ -339,13 +339,33 @@ describe("helpers", () => {
     expect(isPlaceholderCompany("Apex Financial Capital")).toBe(false);
   });
 
-  it("buildQueries quotes the company and uses up to four title keywords", () => {
+  it("buildQueries searches the company only, never the person's job title", () => {
     expect(buildQueries(input)).toEqual([
       `"Apex Financial Capital" news`,
-      `"Apex Financial Capital" VP Compliance Risk challenges regulation`,
+      `"Apex Financial Capital" regulation compliance risk`,
     ]);
-    expect(buildQueries({ ...input, title: "Chief Information Security Officer" })[1]).toBe(
-      `"Apex Financial Capital" Chief Information Security Officer challenges regulation`,
-    );
+    expect(buildQueries({ ...input, title: "Chief Information Security Officer" })[1]).not.toMatch(/Officer|Security/);
+  });
+
+  it("drops people profiles, social networks and job listings, and asks Tavily to exclude them", async () => {
+    const results = [
+      { title: "Apex Financial Capital faces regulator inquiry", url: "https://news.example.com/apex-inquiry", content: "Apex Financial Capital is under review.", score: 0.9 },
+      { title: "Jane Doe - Head of Risk at Apex Financial Capital", url: "https://uk.linkedin.com/in/jane-doe", content: "Apex Financial Capital risk leader.", score: 0.8 },
+      { title: "Director, Operational Risk at Apex Financial Capital", url: "https://search.jobs.apexfinancial.com/job/123", content: "Apex Financial Capital is hiring.", score: 0.7 },
+      { title: "Apex Financial Capital careers", url: "https://apexfinancial.com/careers/risk", content: "Join Apex Financial Capital.", score: 0.6 },
+      { title: "Apex Financial Capital trader leaves", url: "https://www.efinancialcareers.com/news/apex", content: "Apex Financial Capital news.", score: 0.5 },
+      { title: "Apex Financial Capital team", url: "https://theorg.com/org/apex-financial-capital", content: "Apex Financial Capital org chart.", score: 0.4 },
+    ];
+    const fetchImpl = fetchByTopic({
+      news: () => Promise.resolve(okResponse(results)),
+      general: () => Promise.resolve(okResponse([])),
+    });
+
+    const result = await researchCompany(input, { apiKey: KEY, fetchImpl: asFetch(fetchImpl) });
+
+    expect(result.findings.map((f) => f.url)).toEqual(["https://news.example.com/apex-inquiry"]);
+    const excluded = bodyOf(fetchImpl.mock.calls[0][1] as RequestInit).exclude_domains as string[];
+    expect(excluded).toEqual(expect.arrayContaining(["linkedin.com", "glassdoor.com", "efinancialcareers.com"]));
+    expect(excluded.every((d) => !d.includes("/"))).toBe(true);
   });
 });
