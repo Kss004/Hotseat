@@ -13,6 +13,9 @@ import {
 } from "@/types";
 import { AppError, toErrorResponse, type ErrorCode } from "@/lib/errors";
 
+// LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
+export const maxDuration = 60;
+
 const chatBodySchema = z.object({
   message: z.string().trim().min(1, "Message cannot be empty").max(4000, "Message is too long"),
 });

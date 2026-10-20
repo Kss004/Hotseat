@@ -70,31 +70,3 @@ export async function POST(req: Request) {
     return NextResponse.json(errResp.body, { status: errResp.status });
   }
 }
-
-export async function GET() {
-  try {
-    const db = await getReadyDb();
-    const result = await db.execute({
-      sql: `SELECT id, created_at, title, target_url, raw_input, meeting_context, difficulty, max_turns, status
-            FROM sessions ORDER BY created_at DESC LIMIT 50`,
-      args: [],
-    });
-
-    const sessions = result.rows.map((r) => ({
-      id: r.id as string,
-      created_at: r.created_at as string,
-      title: r.title as string,
-      target_url: r.target_url as string | null,
-      raw_input: r.raw_input as string,
-      meeting_context: JSON.parse(r.meeting_context as string),
-      difficulty: r.difficulty as string,
-      max_turns: Number(r.max_turns),
-      status: r.status as string,
-    }));
-
-    return NextResponse.json({ ok: true, sessions });
-  } catch (err) {
-    const errResp = toErrorResponse(err);
-    return NextResponse.json(errResp.body, { status: errResp.status });
-  }
-}
