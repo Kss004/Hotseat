@@ -87,7 +87,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 41 Vitest cases across 7 files
+npm test            # 47 Vitest cases across 8 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -99,6 +99,7 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Evaluate:** `INSUFFICIENT_TURNS`, a deliberately fabricated quote in the fixture being dropped, the score computed in code.
 - **Persona:** edits persist through a reload.
 - **Router:** failover, repair retry, no switching providers mid-stream.
+- **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
 
 The replay fixtures exercise everything except the models themselves. Output quality is checked manually with `llm:smoke` and the demo script below.
