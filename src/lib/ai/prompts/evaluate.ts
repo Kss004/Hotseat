@@ -58,16 +58,19 @@ CRITICAL EVIDENCE & REWRITE RULES:
    - top_talking_points (3 key messages)
    - defense_shields (2 battle-tested objection responses)
    - killer_questions (3 provocative discovery questions)
-7. Return ONLY valid JSON matching the schema.`;
+7. In all prose (critiques, executive_summary, what_went_wrong), refer to the user's turns as "message #N" using the message number shown in the transcript, never as "Turn N". Turn numbers are only for the turn_number and user_turn_number fields.
+8. Return ONLY valid JSON matching the schema.`;
 }
 
 export function getEvaluateUserPrompt(turns: Turn[]): string {
   const userTurnNumbers = turns.filter((t) => t.role === "user").map((t) => t.turn_number);
+  // The UI calls user turns "message #N" (counting only user turns), so the evaluator's prose must use the same numbering
+  let userMessageCount = 0;
   const formattedTranscript = turns
-    .map(
-      (t) =>
-        `[Turn ${t.turn_number}] ${t.role.toUpperCase()}${t.stance ? ` (Stance: ${t.stance})` : ""}:\n${t.content}`
-    )
+    .map((t) => {
+      const messageLabel = t.role === "user" ? ` (message #${++userMessageCount})` : "";
+      return `[Turn ${t.turn_number}] ${t.role.toUpperCase()}${messageLabel}${t.stance ? ` (Stance: ${t.stance})` : ""}:\n${t.content}`;
+    })
     .join("\n\n");
 
   return `Here is the full meeting transcript:

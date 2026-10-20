@@ -3,6 +3,7 @@ import { getReadyDb } from "@/lib/db";
 import { buildEvaluationSchema, evaluationOutputSchema, type EvaluationOutput, type Turn } from "@/types";
 import { filterValidQuotes } from "@/lib/quotes";
 import { postValidateEvaluation } from "@/lib/evaluation";
+import { getEvaluateUserPrompt } from "@/lib/ai/prompts/evaluate";
 import { POST as evaluatePOST } from "@/app/api/sessions/[id]/evaluate/route";
 import { GET as evaluationGET } from "@/app/api/sessions/[id]/evaluation/route";
 import fixtureEvaluation from "../fixtures/llm/evaluate.json";
@@ -122,6 +123,25 @@ describe("Step 5: Evaluator, Rewrites & Post-Validation", () => {
       const db = await getReadyDb();
       const session = await db.execute({ sql: `SELECT status FROM sessions WHERE id = ?`, args: [sessionId] });
       expect(session.rows[0].status).toBe("evaluated");
+    });
+  });
+
+  describe("evaluator prompt", () => {
+    it("9. labels user turns with the UI's message numbers so critiques match the report", () => {
+      const turn = (n: number, role: "user" | "assistant"): Turn => ({
+        id: `t${n}`,
+        session_id: "s",
+        turn_number: n,
+        role,
+        content: `content ${n}`,
+        created_at: "",
+      });
+      const prompt = getEvaluateUserPrompt([turn(1, "user"), turn(2, "assistant"), turn(3, "user"), turn(4, "assistant")]);
+
+      expect(prompt).toContain("[Turn 1] USER (message #1):");
+      expect(prompt).toContain("[Turn 3] USER (message #2):");
+      expect(prompt).toContain("[Turn 2] ASSISTANT:");
+      expect(prompt).toContain("the only values allowed for turn_number and user_turn_number): 1, 3");
     });
   });
 });

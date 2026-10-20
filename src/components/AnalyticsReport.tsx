@@ -205,6 +205,8 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
               ? "Executive Partner Ready"
               : evaluation.overall_score >= 7.0
               ? "Solid Pitch with Vulnerabilities"
+              : evaluation.overall_score >= 5.0
+              ? "Promising, Needs Sharpening"
               : "High Risk of Disqualification"}
           </div>
         </div>

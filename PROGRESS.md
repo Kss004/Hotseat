@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 46/46, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-20 (`npm test` 47/47, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
@@ -55,6 +55,13 @@ Last verified: 2026-10-20 (`npm test` 46/46, `npm run typecheck` clean, `npm run
   - Chat: 2 turns, stances streamed live.
   - Evaluation: overall 5.8; technical answer credited and the budget dodge penalised; playbook "Acknowledge, Quantify, Prove, Commit"; all quotes verified.
   - Providers: all 14 LLM calls failed over from Gemini (429) to Groq, as logged in `llm_calls`.
+
+- [x] Manual live run in Chrome on OpenCode Go / `deepseek-v4.1-flash` (2026-10-20):
+  - All 7 LLM calls were served by `opencode` with status `ok` and no failover, as logged in `llm_calls`.
+  - Persona 6s, scenarios 17s, chat turns about 3s each, evaluation about 45s.
+  - Evaluation: technical answer credited and the pricing hedge penalised; playbook "Acknowledge, Baseline, Quantify, Commit".
+  - LinkedIn fetch was blocked and showed the paste fallback, as designed.
+  - Fixed after this run: evaluator prose said "Turn 3" where the UI says "message #2" (`tests/evaluate.test.ts` #9), and scores from 5 to 6.9 now read "Promising, Needs Sharpening" instead of "High Risk of Disqualification".
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback
