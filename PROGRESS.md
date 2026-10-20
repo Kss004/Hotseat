@@ -76,7 +76,8 @@ Last verified: 2026-10-20 (`npm test` 83/83, `npm run typecheck` clean, `npm run
 - [x] Client: two parallel searches, 8s timeout, whole-word company filter, dedupe, never throws (`tests/research-client.test.ts`, 16 cases)
 - [x] App: research at the scenarios step feeds the objection map and the persona's headlines; web text fenced as untrusted; stored per session and restored on reload; 24h per-company cache; `RESEARCH_DAILY_LIMIT` cap; honest skipped/unavailable reasons (`tests/research.test.ts`, 7 cases)
 - [x] UI: sources panel on the briefing, opt-out checkbox; checked on a production build in replay mode, including phone width
-- [ ] Live check with a real `TAVILY_API_KEY` on a real company
+- [x] Live check with a real `TAVILY_API_KEY` (2026-10-20): Barclays returned same-day news (a BoE inquiry) that two objections used, but also a named person's LinkedIn profile and job listings, so the second query dropped the job title and social, people-search and job sites are now excluded (sent to Tavily and filtered on every read, including the cache). Retest on HSBC: no people or job results, 3 objections drew on the findings, a repeat used the 24h cache, and the full flow evaluated at 7.3 with 11/11 verbatim quotes
+- [ ] Known gap: a division name such as "HSBC UK" only matches articles that use that exact phrase, so coverage that just says "HSBC" is dropped
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback
