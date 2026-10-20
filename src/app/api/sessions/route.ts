@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getReadyDb } from "@/lib/db";
 import { meetingContextSchema } from "@/types";
 import { toErrorResponse } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 import { getEnv } from "@/lib/env";
 
 const createSessionSchema = z.object({
@@ -20,6 +21,7 @@ const createSessionSchema = z.object({
 
 export async function POST(req: Request) {
   try {
+    await enforceRateLimit(req, "session-create");
     const json = await req.json();
     const parsed = createSessionSchema.safeParse(json);
 

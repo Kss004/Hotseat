@@ -17,7 +17,7 @@ export function useLiveMode() {
 
 export async function resetDb() {
   const db = await getReadyDb();
-  for (const table of ["evaluations", "turns", "scenarios", "personas", "llm_calls", "sessions"]) {
+  for (const table of ["evaluations", "turns", "scenarios", "personas", "llm_calls", "sessions", "rate_limits"]) {
     await db.execute(`DELETE FROM ${table}`);
   }
 }

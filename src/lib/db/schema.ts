@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   error_code TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);
 `;
 
 // Additive column migrations for tables that already exist. Applied only when the column is missing.

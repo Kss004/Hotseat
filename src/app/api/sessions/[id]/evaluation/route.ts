@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { getReadyDb } from "@/lib/db";
 import { EVALUATION_COLUMNS, rowToEvaluation } from "@/lib/evaluation";
 import { toErrorResponse, AppError } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
+    await enforceRateLimit(req, "read");
     const sessionId = params.id;
     const db = await getReadyDb();
 

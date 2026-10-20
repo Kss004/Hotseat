@@ -27,6 +27,12 @@ export function describeApiError(body: ApiErrorBody | null | undefined, fallback
       return { code, retryable: false, message: "You've reached this session's turn limit. End the simulation to see your report." };
     case "INSUFFICIENT_TURNS":
       return { code, retryable: false, message: "Reply to the persona at least twice before ending, so there is enough to evaluate." };
+    case "RATE_LIMITED":
+      return {
+        code,
+        retryable: true,
+        message: body?.message || "Too many requests. Please wait a few minutes and try again.",
+      };
     case "SESSION_ENDED":
       return { code, retryable: false, message: "This simulation has already ended." };
     case "NOT_FOUND":

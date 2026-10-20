@@ -15,6 +15,10 @@ export const envSchema = z.object({
   DATABASE_AUTH_TOKEN: z.string().default(""),
   MAX_TURNS: z.coerce.number().int().min(2).max(30).default(10),
   LLM_MODE: z.enum(["live", "replay"]).default("live"),
+  // Per-IP request limits (src/lib/rateLimit.ts); "off" is for tests and local debugging only
+  RATE_LIMIT: z.enum(["on", "off"]).default("on"),
+  // Cap on AI-backed requests from all visitors combined per UTC day, so rotating IPs can't drain the API keys
+  GLOBAL_DAILY_LLM_LIMIT: z.coerce.number().int().min(1).default(500),
 });
 
 export type Env = z.infer<typeof envSchema>;

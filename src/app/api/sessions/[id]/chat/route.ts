@@ -12,6 +12,7 @@ import {
   type TechnicalDepth,
 } from "@/types";
 import { AppError, toErrorResponse, type ErrorCode } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
 export const maxDuration = 60;
@@ -29,6 +30,7 @@ function jsonError(code: ErrorCode, message: string, status: number) {
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
+    await enforceRateLimit(req, "chat");
     const sessionId = params.id;
     const body = chatBodySchema.safeParse(await req.json().catch(() => null));
     if (!body.success) {

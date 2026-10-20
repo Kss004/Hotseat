@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getReadyDb } from "@/lib/db";
 import { toErrorResponse, AppError } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
+    await enforceRateLimit(req, "end");
     const sessionId = params.id;
     const db = await getReadyDb();
 

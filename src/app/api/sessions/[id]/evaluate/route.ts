@@ -18,12 +18,14 @@ import {
 } from "@/types";
 import { postValidateEvaluation } from "@/lib/evaluation";
 import { toErrorResponse, AppError } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
 export const maxDuration = 120;
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
+    await enforceRateLimit(req, "evaluate");
     const sessionId = params.id;
     const db = await getReadyDb();
 
