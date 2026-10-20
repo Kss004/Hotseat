@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   researchCompany,
   buildQueries,
+  brandName,
   normalizeCompanyKey,
   isPlaceholderCompany,
   type ResearchInput,
@@ -345,6 +346,38 @@ describe("helpers", () => {
       `"Apex Financial Capital" regulation compliance risk`,
     ]);
     expect(buildQueries({ ...input, title: "Chief Information Security Officer" })[1]).not.toMatch(/Officer|Security/);
+  });
+
+  it("brandName drops trailing region, division and legal words, but never below 4 characters", () => {
+    expect(brandName("HSBC UK")).toBe("HSBC");
+    expect(brandName("Acme Holdings Ltd.")).toBe("Acme");
+    expect(brandName("Standard Chartered Group")).toBe("Standard Chartered");
+    expect(brandName("Apex Financial Capital, Inc.")).toBe("Apex Financial Capital");
+    expect(brandName("Barclays")).toBe("Barclays");
+    // Too short to stand alone: keep the full name
+    expect(brandName("BT Group")).toBe("BT Group");
+    expect(brandName("UK")).toBe("UK");
+  });
+
+  it("matches articles that name only the parent brand, and searches news on the brand", async () => {
+    const division: ResearchInput = { company: "HSBC UK", title: "CCO", product: "x" };
+    const results = [
+      { title: "HSBC fined over AML controls", url: "https://news.example.com/hsbc-fine", content: "HSBC was fined.", score: 0.9 },
+      { title: "HSBC UK opens new branch", url: "https://news.example.com/hsbc-uk", content: "HSBC UK expands.", score: 0.8 },
+      { title: "HSBCX token launches", url: "https://news.example.com/hsbcx", content: "HSBCX is a crypto token.", score: 0.7 },
+    ];
+    const fetchImpl = fetchByTopic({
+      news: () => Promise.resolve(okResponse(results)),
+      general: () => Promise.resolve(okResponse([])),
+    });
+
+    const result = await researchCompany(division, { apiKey: KEY, fetchImpl: asFetch(fetchImpl) });
+
+    expect(result.findings.map((f) => f.url)).toEqual([
+      "https://news.example.com/hsbc-fine",
+      "https://news.example.com/hsbc-uk",
+    ]);
+    expect(result.queries).toEqual([`"HSBC" news`, `"HSBC UK" regulation compliance risk`]);
   });
 
   it("drops people profiles, social networks and job listings, and asks Tavily to exclude them", async () => {

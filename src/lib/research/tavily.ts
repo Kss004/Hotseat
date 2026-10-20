@@ -104,6 +104,32 @@ export function normalizeCompanyKey(company: string): string {
   return words.join(" ");
 }
 
+/** Trailing region or division words: "HSBC UK" and "Acme Holdings" are covered in news as "HSBC" and "Acme". */
+const DIVISION_WORDS = new Set([
+  "uk", "us", "usa", "europe", "emea", "apac", "asia", "americas", "india",
+  "group", "holdings", "holding", "international", "global", "worldwide",
+]);
+/** A brand shorter than this is too generic to match on its own, so the full name is kept. */
+const MIN_BRAND_LENGTH = 4;
+
+/** The parent brand as written: trailing division, region and legal words removed ("HSBC UK" → "HSBC"). */
+export function brandName(company: string): string {
+  const full = company.replace(/"/g, "").trim();
+  const tokens = full.split(/\s+/).filter(Boolean);
+  while (tokens.length > 1) {
+    const last = squash(tokens[tokens.length - 1]);
+    if (!DIVISION_WORDS.has(last) && !LEGAL_SUFFIXES.has(last)) break;
+    tokens.pop();
+  }
+  const brand = tokens.join(" ").replace(/[,;.\s]+$/, "");
+  return squash(brand).replace(/ /g, "").length >= MIN_BRAND_LENGTH ? brand : full;
+}
+
+/** Normalized names a result may mention: the full company name, and its parent brand when different. */
+function companyMatchKeys(company: string): string[] {
+  return [...new Set([normalizeCompanyKey(company), normalizeCompanyKey(brandName(company))])].filter(Boolean);
+}
+
 const PLACEHOLDER_KEYS = new Set(PLACEHOLDER_NAMES.map(squash));
 
 /** True when the company is unknown or a generic stand-in, so live research makes no sense. */
@@ -116,12 +142,13 @@ export function isPlaceholderCompany(company: string, uncertainFields?: string[]
 }
 
 /**
- * Two search queries about the company only: recent news, and its regulatory and risk situation. The person's job
- * title is deliberately left out: it makes search engines return individuals' profiles.
+ * Two search queries about the company only: recent news on the parent brand (where coverage is), and the regulatory
+ * and risk situation of the named entity. The person's job title is deliberately left out: it makes search engines
+ * return individuals' profiles.
  */
 export function buildQueries(input: ResearchInput): string[] {
   const company = input.company.replace(/"/g, "").trim();
-  return [`"${company}" news`, `"${company}" regulation compliance risk`];
+  return [`"${brandName(company)}" news`, `"${company}" regulation compliance risk`];
 }
 
 class HttpStatusError extends Error {
@@ -162,8 +189,8 @@ function truncateSnippet(text: string): string {
 
 /** Validates raw Tavily results, keeps only company mentions on http(s) URLs, dedupes, sorts and caps. */
 function toFindings(raw: unknown[], company: string): ResearchFinding[] {
-  const companyKey = normalizeCompanyKey(company);
-  if (!companyKey) return [];
+  const matchKeys = companyMatchKeys(company);
+  if (matchKeys.length === 0) return [];
 
   const candidates: { finding: ResearchFinding; score: number; key: string }[] = [];
   for (const item of raw) {
@@ -174,8 +201,9 @@ function toFindings(raw: unknown[], company: string): ResearchFinding[] {
 
     const title = collapse(typeof entry.title === "string" ? entry.title : "");
     const content = collapse(typeof entry.content === "string" ? entry.content : "");
-    // Whole-word match, so "Apex" doesn't match "Apexology" or "Bapex"
-    if (!` ${squash(`${title} ${content}`)} `.includes(` ${companyKey} `)) continue;
+    // Whole-word match on the full name or parent brand, so "Apex" doesn't match "Apexology" or "Bapex"
+    const text = ` ${squash(`${title} ${content}`)} `;
+    if (!matchKeys.some((key) => text.includes(` ${key} `))) continue;
 
     const finding: ResearchFinding = {
       title: title || url.hostname,
