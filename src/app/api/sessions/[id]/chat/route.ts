@@ -21,6 +21,9 @@ const chatBodySchema = z.object({
   message: z.string().trim().min(1, "Message cannot be empty").max(4000, "Message is too long"),
 });
 
+// Longer than maxDuration, so a lock left by a killed function always expires
+const LOCK_SEC = 90;
+
 function jsonError(code: ErrorCode, message: string, status: number) {
   return new Response(JSON.stringify({ code, message }), {
     status,
@@ -29,6 +32,8 @@ function jsonError(code: ErrorCode, message: string, status: number) {
 }
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
+  // Set once this request holds the session's chat lock; called on every exit path after that
+  let releaseLock: (() => Promise<void>) | null = null;
   try {
     await enforceRateLimit(req, "chat");
     const sessionId = params.id;
@@ -102,6 +107,23 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     });
     const objections = scenariosRes.rows.length > 0 ? JSON.parse(scenariosRes.rows[0].objections as string) : [];
 
+    // One reply in flight per session: a double-send or a script can't run parallel AI calls on one session.
+    // The lock expires on its own after LOCK_SEC, so a function killed mid-reply can't leave the session stuck.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const lock = await db.execute({
+      sql: `UPDATE sessions SET streaming_until = ?
+            WHERE id = ? AND (streaming_until IS NULL OR streaming_until < ?)`,
+      args: [nowSec + LOCK_SEC, sessionId, nowSec],
+    });
+    if (lock.rowsAffected === 0) {
+      return jsonError("BUSY", "The counterpart is still replying. Wait for the reply to finish, then send again.", 409);
+    }
+    releaseLock = () =>
+      db
+        .execute({ sql: `UPDATE sessions SET streaming_until = NULL WHERE id = ?`, args: [sessionId] })
+        .then(() => undefined)
+        .catch((e) => console.error("Failed to release chat lock:", e));
+
     // 4. Save user turn; the turn number is computed in the same statement to avoid a read-then-write race
     const userTurnId = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_u`;
     const insertedUser = await db.execute({
@@ -139,99 +161,110 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     // 6. SSE response stream
     const encoder = new TextEncoder();
     let clientGone = false;
-    const stream = new ReadableStream({
-      async start(controller) {
-        // If the browser disconnects we keep generating so the reply is still persisted
-        const send = (payload: Record<string, unknown>) => {
-          if (clientGone) return;
-          try {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-          } catch {
-            clientGone = true;
-          }
-        };
+    const releaseStreamLock = releaseLock;
 
-        let assistantReply = "";
-        const assistantTurnNumber = userTurnNumber + 1;
-        const assistantTurnId = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_a`;
-
+    const streamReply = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
+      // If the browser disconnects we keep generating so the reply is still persisted
+      const send = (payload: Record<string, unknown>) => {
+        if (clientGone) return;
         try {
-          for await (const token of router.stream({
-            purpose: "chat",
-            system: systemPrompt,
-            messages,
-            promptVersion: CHAT_PROMPT_VERSION,
-            sessionId,
-          })) {
-            assistantReply += token;
-            send({ event: "token", token });
-          }
-        } catch (streamErr: unknown) {
-          // The persona never answered, so the user's turn is rolled back and does not count against the cap
-          await db
-            .execute({ sql: `DELETE FROM turns WHERE id = ?`, args: [userTurnId] })
-            .catch((e) => console.error("Failed to roll back user turn:", e));
-          const code: ErrorCode = streamErr instanceof AppError ? streamErr.code : "LLM_UNAVAILABLE";
-          console.error(`Chat stream failed for ${sessionId}:`, streamErr);
-          send({
-            event: "error",
-            code,
-            error: "The AI providers are unavailable right now. Your message was not counted; try sending it again.",
-          });
-          try {
-            controller.close();
-          } catch {
-            // already closed by a disconnect
-          }
-          return;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch {
+          clientGone = true;
         }
+      };
 
-        try {
-          await db.execute({
-            sql: `INSERT INTO turns (id, session_id, turn_number, role, content)
-                  VALUES (?, ?, ?, 'assistant', ?)`,
-            args: [assistantTurnId, sessionId, assistantTurnNumber, assistantReply],
-          });
+      let assistantReply = "";
+      const assistantTurnNumber = userTurnNumber + 1;
+      const assistantTurnId = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_a`;
 
-          // Decision D2: second small structured call classifies the persona's stance.
-          // On failure we report the stance as unavailable instead of inventing one.
-          let classifiedStance: Stance | null = null;
-          try {
-            const stanceResult = await router.complete<{ stance: Stance; reasoning?: string }>({
-              purpose: "stance",
-              system: getStanceSystemPrompt(persona),
-              user: getStanceUserPrompt({ lastUserMessage: userMessage, assistantReply }),
-              schema: stanceOutputSchema,
-              promptVersion: STANCE_PROMPT_VERSION,
-              sessionId,
-            });
-            classifiedStance = stanceResult.data.stance;
-            await db.execute({
-              sql: `UPDATE turns SET stance = ? WHERE id = ?`,
-              args: [classifiedStance, assistantTurnId],
-            });
-            send({ event: "stance", stance: classifiedStance, reasoning: stanceResult.data.reasoning || "" });
-          } catch (stanceErr) {
-            console.warn("Stance classification failed:", stanceErr);
-            send({ event: "stance", stance: null, unavailable: true, reasoning: "Stance reading unavailable for this turn" });
-          }
-
-          send({
-            event: "done",
-            turn_number: assistantTurnNumber,
-            user_turn_number: userTurnNumber,
-            stance: classifiedStance,
-            remaining_turns: maxTurns - (userTurnsCount + 1),
-          });
-        } catch (persistErr) {
-          console.error(`Chat persistence failed for ${sessionId}:`, persistErr);
-          send({ event: "error", code: "INTERNAL_ERROR", error: "The reply could not be saved. Reload to see the saved transcript." });
+      try {
+        for await (const token of router.stream({
+          purpose: "chat",
+          system: systemPrompt,
+          messages,
+          promptVersion: CHAT_PROMPT_VERSION,
+          sessionId,
+        })) {
+          assistantReply += token;
+          send({ event: "token", token });
         }
-
+      } catch (streamErr: unknown) {
+        // The persona never answered, so the user's turn is rolled back and does not count against the cap
+        await db
+          .execute({ sql: `DELETE FROM turns WHERE id = ?`, args: [userTurnId] })
+          .catch((e) => console.error("Failed to roll back user turn:", e));
+        const code: ErrorCode = streamErr instanceof AppError ? streamErr.code : "LLM_UNAVAILABLE";
+        console.error(`Chat stream failed for ${sessionId}:`, streamErr);
+        send({
+          event: "error",
+          code,
+          error: "The AI providers are unavailable right now. Your message was not counted; try sending it again.",
+        });
         try {
           controller.close();
         } catch {
           // already closed by a disconnect
+        }
+        return;
+      }
+
+      try {
+        await db.execute({
+          sql: `INSERT INTO turns (id, session_id, turn_number, role, content)
+                VALUES (?, ?, ?, 'assistant', ?)`,
+          args: [assistantTurnId, sessionId, assistantTurnNumber, assistantReply],
+        });
+
+        // Decision D2: second small structured call classifies the persona's stance.
+        // On failure we report the stance as unavailable instead of inventing one.
+        let classifiedStance: Stance | null = null;
+        try {
+          const stanceResult = await router.complete<{ stance: Stance; reasoning?: string }>({
+            purpose: "stance",
+            system: getStanceSystemPrompt(persona),
+            user: getStanceUserPrompt({ lastUserMessage: userMessage, assistantReply }),
+            schema: stanceOutputSchema,
+            promptVersion: STANCE_PROMPT_VERSION,
+            sessionId,
+          });
+          classifiedStance = stanceResult.data.stance;
+          await db.execute({
+            sql: `UPDATE turns SET stance = ? WHERE id = ?`,
+            args: [classifiedStance, assistantTurnId],
+          });
+          send({ event: "stance", stance: classifiedStance, reasoning: stanceResult.data.reasoning || "" });
+        } catch (stanceErr) {
+          console.warn("Stance classification failed:", stanceErr);
+          send({ event: "stance", stance: null, unavailable: true, reasoning: "Stance reading unavailable for this turn" });
+        }
+
+        send({
+          event: "done",
+          turn_number: assistantTurnNumber,
+          user_turn_number: userTurnNumber,
+          stance: classifiedStance,
+          remaining_turns: maxTurns - (userTurnsCount + 1),
+        });
+      } catch (persistErr) {
+        console.error(`Chat persistence failed for ${sessionId}:`, persistErr);
+        send({ event: "error", code: "INTERNAL_ERROR", error: "The reply could not be saved. Reload to see the saved transcript." });
+      }
+
+      try {
+        controller.close();
+      } catch {
+        // already closed by a disconnect
+      }
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          await streamReply(controller);
+        } finally {
+          // Released however the reply ends: done, provider failure, or a save error
+          await releaseStreamLock();
         }
       },
       cancel() {
@@ -247,6 +280,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       },
     });
   } catch (err: unknown) {
+    // A failure after taking the lock but before the stream started (e.g. saving the user turn)
+    await releaseLock?.();
     const errResp = toErrorResponse(err);
     return new Response(JSON.stringify(errResp.body), {
       status: errResp.status,

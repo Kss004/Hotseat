@@ -33,6 +33,12 @@ export function describeApiError(body: ApiErrorBody | null | undefined, fallback
         retryable: true,
         message: body?.message || "Too many requests. Please wait a few minutes and try again.",
       };
+    case "BUSY":
+      return {
+        code,
+        retryable: true,
+        message: body?.message || "The counterpart is still replying. Wait for the reply to finish, then send again.",
+      };
     case "SESSION_ENDED":
       return { code, retryable: false, message: "This simulation has already ended." };
     case "NOT_FOUND":

@@ -7,6 +7,7 @@ export type ErrorCode =
   | "NOT_FOUND"
   | "SESSION_ENDED"
   | "RATE_LIMITED"
+  | "BUSY"
   | "INTERNAL_ERROR";
 
 export class AppError extends Error {

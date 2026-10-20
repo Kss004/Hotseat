@@ -96,4 +96,10 @@ export const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: stri
     column: "objection_playbook",
     ddl: "ALTER TABLE evaluations ADD COLUMN objection_playbook TEXT NOT NULL DEFAULT '[]'",
   },
+  {
+    // Unix seconds until which a chat reply is in flight; NULL when idle (one reply at a time per session)
+    table: "sessions",
+    column: "streaming_until",
+    ddl: "ALTER TABLE sessions ADD COLUMN streaming_until INTEGER",
+  },
 ];

@@ -19,6 +19,8 @@ export const envSchema = z.object({
   RATE_LIMIT: z.enum(["on", "off"]).default("on"),
   // Cap on AI-backed requests from all visitors combined per UTC day, so rotating IPs can't drain the API keys
   GLOBAL_DAILY_LLM_LIMIT: z.coerce.number().int().min(1).default(500),
+  // Cap on AI-backed requests from all visitors combined per minute, to stay under the providers' own per-minute limits
+  GLOBAL_LLM_PER_MINUTE: z.coerce.number().int().min(1).default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;

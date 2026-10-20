@@ -30,6 +30,7 @@ npm run dev                    # http://localhost:3000
 | `MAX_TURNS` | no | Default user-turn cap per session (10) |
 | `RATE_LIMIT` | no | Per-IP request limits, `on` by default |
 | `GLOBAL_DAILY_LLM_LIMIT` | no | AI-backed requests per day across all visitors (500) |
+| `GLOBAL_LLM_PER_MINUTE` | no | AI-backed requests per minute across all visitors (30) |
 
 There is no manual database step: tables are created on the first request. `npm run db:migrate` still exists if you want to create them ahead of time. To check your keys and model IDs, run `npm run llm:smoke`.
 
@@ -84,7 +85,7 @@ Key files:
   - The overall score is computed in code as the mean of the four dimensions.
 - **Stance is a second, small structured call** made after the streamed reply finishes (decision D2). Plain text streams fast, and the stance classification still gets schema validation.
 - **Paste-first ingestion.** LinkedIn doesn't offer a public profile API to unauthenticated clients, so the URL fetch is best-effort and clearly labelled (see Limitations).
-- **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
+- **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. Short-window limits stop bursts: at most 20 requests per 10 seconds from one IP, and 30 AI requests a minute across all visitors (the providers' own per-minute limits). Each session streams one chat reply at a time, so a double-send can't run parallel AI calls. Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
 - **Model IDs come only from the environment**, so a model deprecation is a config change, not a code change.
 
 ---
@@ -92,7 +93,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 59 Vitest cases across 9 files
+npm test            # 60 Vitest cases across 9 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -106,7 +107,8 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Router:** failover, repair retry, no switching providers mid-stream.
 - **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
-- **Security:** per-IP limits and their reset, the global daily AI cap, a route returning 429, the access-code redirect and 401, cookie handling, the open-redirect guard, random session ids, no session listing.
+- **Security:** per-IP hourly and burst limits and their reset, the global per-minute and daily AI caps, a route returning 429, a full normal session staying inside every limit, random session ids, no session listing.
+- **Chat lock:** two messages sent at once (one streams, one gets 409 `BUSY`), release after each reply and after a provider failure, an expired lock not blocking.
 
 The replay fixtures exercise everything except the models themselves. Output quality is checked manually with `llm:smoke` and the demo script below.
 

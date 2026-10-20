@@ -60,13 +60,30 @@ function secondsUntil(resetAt: number): number {
   return Math.max(1, Math.ceil(resetAt - Date.now() / 1000));
 }
 
-/** Throws RATE_LIMITED (429) when this client, or all clients together on AI routes, are over the limit. */
+/**
+ * Short-window burst limit per IP, shared by every API route. Normal use (one click at a time) stays far below it;
+ * it stops scripts firing a whole hourly allowance in one second. Generous enough for a few people behind one NAT.
+ */
+const BURST = { limit: 20, windowSec: 10 };
+const MINUTE_SEC = 60;
+
+function tooMany(message: string, resetAt: number): AppError {
+  return new AppError("RATE_LIMITED", message, 429, { retry_after_seconds: secondsUntil(resetAt) });
+}
+
+/** Throws RATE_LIMITED (429) when this client, or all clients together on AI routes, are over a limit. */
 export async function enforceRateLimit(req: Request, bucket: RateLimitBucket): Promise<void> {
   const env = getEnv();
   if (env.RATE_LIMIT === "off") return;
 
+  const ipHash = hashIp(clientIp(req));
+  const burst = await hit(`burst:${ipHash}`, BURST.windowSec);
+  if (burst.count > BURST.limit) {
+    throw tooMany("You're sending requests too quickly. Please wait a few seconds and try again.", burst.resetAt);
+  }
+
   const cfg = BUCKETS[bucket];
-  const own = await hit(`${bucket}:${hashIp(clientIp(req))}`, cfg.windowSec);
+  const own = await hit(`${bucket}:${ipHash}`, cfg.windowSec);
   if (own.count > cfg.limit) {
     const retryAfter = secondsUntil(own.resetAt);
     const minutes = Math.ceil(retryAfter / 60);
@@ -79,6 +96,12 @@ export async function enforceRateLimit(req: Request, bucket: RateLimitBucket): P
   }
 
   if (cfg.usesLlm) {
+    // Keeps all visitors together under the AI providers' own per-minute limits
+    const perMinute = await hit("llm-minute:global", MINUTE_SEC);
+    if (perMinute.count > env.GLOBAL_LLM_PER_MINUTE) {
+      throw tooMany("The coach is busy right now. Please retry in a few seconds.", perMinute.resetAt);
+    }
+
     const global = await hit("llm-daily:global", DAY_SEC);
     if (global.count > env.GLOBAL_DAILY_LLM_LIMIT) {
       throw new AppError(

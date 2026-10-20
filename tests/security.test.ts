@@ -29,6 +29,7 @@ describe("Deployment security", () => {
   afterEach(() => {
     process.env.RATE_LIMIT = "off";
     delete process.env.GLOBAL_DAILY_LLM_LIMIT;
+    delete process.env.GLOBAL_LLM_PER_MINUTE;
     resetEnvCache();
     vi.useRealTimers();
   });
@@ -102,6 +103,51 @@ describe("Deployment security", () => {
       const res = await POST(fromIp("192.0.2.5", body));
       expect(res.status).toBe(429);
       expect((await res.json()).code).toBe("RATE_LIMITED");
+    });
+
+    it("#8 a burst of more than 20 requests in 10 seconds from one IP is rejected, across routes", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-20T10:00:00Z"));
+      // Mixed routes share the burst bucket; none of their own hourly limits is reached here
+      for (let i = 0; i < 20; i++) await enforceRateLimit(fromIp("203.0.113.20"), i % 2 ? "read" : "persona-edit");
+
+      const err = await rateLimitError(enforceRateLimit(fromIp("203.0.113.20"), "read"));
+      expect(isAppError(err) && err.status).toBe(429);
+      expect(isAppError(err) && err.message).toMatch(/too quickly/);
+      // Another IP is unaffected
+      await expect(enforceRateLimit(fromIp("203.0.113.21"), "read")).resolves.toBeUndefined();
+
+      // The next 10-second window starts fresh
+      vi.setSystemTime(new Date("2026-10-20T10:00:10Z"));
+      await expect(enforceRateLimit(fromIp("203.0.113.20"), "read")).resolves.toBeUndefined();
+    });
+
+    it("#9 caps AI requests from all IPs combined per minute; non-AI routes are unaffected", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-20T10:00:00Z"));
+      process.env.GLOBAL_LLM_PER_MINUTE = "3";
+      resetEnvCache();
+      for (let i = 0; i < 3; i++) await enforceRateLimit(fromIp(`198.51.100.${10 + i}`), "chat");
+
+      const err = await rateLimitError(enforceRateLimit(fromIp("198.51.100.50"), "chat"));
+      expect(isAppError(err) && err.status).toBe(429);
+      expect(isAppError(err) && err.message).toMatch(/busy/);
+      await expect(enforceRateLimit(fromIp("198.51.100.50"), "read")).resolves.toBeUndefined();
+
+      vi.setSystemTime(new Date("2026-10-20T10:01:00Z"));
+      await expect(enforceRateLimit(fromIp("198.51.100.51"), "chat")).resolves.toBeUndefined();
+    });
+
+    it("#10 a normal full session stays well inside every limit", async () => {
+      // persona, scenarios, 10 chat turns, end, evaluate, plus page reads, all from one IP within a minute
+      const ip = "192.0.2.77";
+      const steps: Array<Parameters<typeof enforceRateLimit>[1]> = [
+        "session-create", "persona-generate", "read", "scenarios",
+        ...Array<"chat">(10).fill("chat"), "end", "evaluate", "read", "read",
+      ];
+      for (const step of steps) {
+        await expect(enforceRateLimit(fromIp(ip), step)).resolves.toBeUndefined();
+      }
     });
   });
 });

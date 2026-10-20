@@ -157,10 +157,66 @@ describe("Step 4: Streaming Sparring Chat & Stance Validation", () => {
         const db = await getReadyDb();
         const count = await db.execute({ sql: `SELECT COUNT(*) AS c FROM turns WHERE session_id = ?`, args: [sessionId] });
         expect(Number(count.rows[0].c)).toBe(0);
+        // The failed reply must not leave the session locked
+        const lock = await db.execute({ sql: `SELECT streaming_until FROM sessions WHERE id = ?`, args: [sessionId] });
+        expect(lock.rows[0].streaming_until).toBeNull();
       } finally {
         process.env = saved;
         useReplayMode();
       }
+    });
+
+    it("8. Two messages sent at once: exactly one streams, the other gets 409 BUSY and writes nothing", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+
+      const [a, b] = await Promise.all([
+        chatPOST(jsonRequest({ message: "First message." }), params(sessionId)),
+        chatPOST(jsonRequest({ message: "Second message." }), params(sessionId)),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([200, 409]);
+      const busy = a.status === 409 ? a : b;
+      const ok = a.status === 409 ? b : a;
+      expect((await busy.json()).code).toBe("BUSY");
+      await readSse(ok);
+
+      const db = await getReadyDb();
+      const turns = await db.execute({ sql: `SELECT role FROM turns WHERE session_id = ? ORDER BY turn_number`, args: [sessionId] });
+      expect(turns.rows.map((r) => r.role)).toEqual(["user", "assistant"]);
+    });
+
+    it("9. The lock is released after each reply, so back-to-back messages both work", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+
+      for (const message of ["First message.", "Second message."]) {
+        const res = await chatPOST(jsonRequest({ message }), params(sessionId));
+        expect(res.status).toBe(200);
+        expect((await readSse(res)).at(-1)?.event).toBe("done");
+      }
+
+      const db = await getReadyDb();
+      const lock = await db.execute({ sql: `SELECT streaming_until FROM sessions WHERE id = ?`, args: [sessionId] });
+      expect(lock.rows[0].streaming_until).toBeNull();
+    });
+
+    it("10. A held lock blocks with BUSY; an expired one (from a killed function) does not", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+      const db = await getReadyDb();
+      const now = Math.floor(Date.now() / 1000);
+
+      await db.execute({ sql: `UPDATE sessions SET streaming_until = ? WHERE id = ?`, args: [now + 60, sessionId] });
+      const blocked = await chatPOST(jsonRequest({ message: "Hello?" }), params(sessionId));
+      expect(blocked.status).toBe(409);
+      const count = await db.execute({ sql: `SELECT COUNT(*) AS c FROM turns WHERE session_id = ?`, args: [sessionId] });
+      expect(Number(count.rows[0].c)).toBe(0);
+
+      await db.execute({ sql: `UPDATE sessions SET streaming_until = ? WHERE id = ?`, args: [now - 1, sessionId] });
+      const res = await chatPOST(jsonRequest({ message: "Hello again." }), params(sessionId));
+      expect(res.status).toBe(200);
+      await readSse(res);
     });
   });
 });
