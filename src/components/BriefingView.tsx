@@ -1,15 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import type { ScenariosRecord, Difficulty } from "@/types";
+import type { ScenariosRecord, ResearchRecord, Difficulty } from "@/types";
+import { ResearchPanel } from "@/components/ResearchPanel";
 
 interface BriefingViewProps {
   scenarios: ScenariosRecord;
+  research?: ResearchRecord | null;
   difficulty: Difficulty;
   onStartSparring: () => void;
 }
 
-export function BriefingView({ scenarios, difficulty, onStartSparring }: BriefingViewProps) {
+export function BriefingView({ scenarios, research = null, difficulty, onStartSparring }: BriefingViewProps) {
   const [copyState, setCopyState] = useState<{ idx: number; ok: boolean } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
@@ -78,6 +80,8 @@ export function BriefingView({ scenarios, difficulty, onStartSparring }: Briefin
           Enter Sparring Arena →
         </button>
       </div>
+
+      <ResearchPanel research={research} />
 
       {/* Main Grid: Objections on left, Questions on right */}
       <div className="grid-split" style={{ gap: "2rem" }}>

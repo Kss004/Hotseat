@@ -7,7 +7,7 @@ import { PersonaCard } from "@/components/PersonaCard";
 import { BriefingView } from "@/components/BriefingView";
 import { SparringArena } from "@/components/SparringArena";
 import { AnalyticsReport } from "@/components/AnalyticsReport";
-import type { Session, PersonaRecord, ScenariosRecord, Turn, EvaluationRecord } from "@/types";
+import type { Session, PersonaRecord, ScenariosRecord, ResearchRecord, Turn, EvaluationRecord } from "@/types";
 import { describeApiError, readJson } from "@/lib/apiErrors";
 
 type WorkflowStage = "ingest" | "persona" | "briefing" | "sparring" | "analytics";
@@ -17,6 +17,7 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [persona, setPersona] = useState<PersonaRecord | null>(null);
   const [scenarios, setScenarios] = useState<ScenariosRecord | null>(null);
+  const [research, setResearch] = useState<ResearchRecord | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationRecord | null>(null);
   const [isLoadingScenarios, setIsLoadingScenarios] = useState(false);
@@ -48,6 +49,7 @@ export default function Home() {
         session: Session;
         persona: PersonaRecord | null;
         scenarios: ScenariosRecord | null;
+        research: ResearchRecord | null;
         turns: Turn[];
         evaluation: EvaluationRecord | null;
         code?: string;
@@ -61,6 +63,7 @@ export default function Home() {
         setSession(data.session);
         if (data.persona) setPersona(data.persona);
         if (data.scenarios) setScenarios(data.scenarios);
+        if (data.research) setResearch(data.research);
         if (data.turns) setTurns(data.turns);
         if (data.evaluation) setEvaluation(data.evaluation);
 
@@ -105,7 +108,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
       });
 
-      const data = await readJson<{ scenarios: ScenariosRecord; code?: string; message?: string }>(res);
+      const data = await readJson<{
+        scenarios: ScenariosRecord;
+        research?: ResearchRecord | null;
+        code?: string;
+        message?: string;
+      }>(res);
       if (!res.ok || !data?.scenarios) {
         const err = describeApiError(data, "Failed to generate the scenario briefing.");
         setGlobalError({ message: err.message, retry: err.retryable ? handleConfirmPersona : undefined });
@@ -113,6 +121,7 @@ export default function Home() {
       }
 
       setScenarios(data.scenarios);
+      setResearch(data.research ?? null);
       setStage("briefing");
     } catch {
       setGlobalError({ message: "Could not reach the server.", retry: handleConfirmPersona });
@@ -156,6 +165,7 @@ export default function Home() {
     setSession(null);
     setPersona(null);
     setScenarios(null);
+    setResearch(null);
     setTurns([]);
     setEvaluation(null);
     setStage("ingest");
@@ -302,6 +312,7 @@ export default function Home() {
         {stage === "briefing" && scenarios && session && (
           <BriefingView
             scenarios={scenarios}
+            research={research}
             difficulty={session.difficulty}
             onStartSparring={handleStartSparring}
           />

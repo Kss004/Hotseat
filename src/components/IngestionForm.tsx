@@ -25,6 +25,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
   const [meetingType, setMeetingType] = useState("Enterprise Sales Pitch");
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [difficulty, setDifficulty] = useState<"warmup" | "realistic" | "hostile">("realistic");
+  const [webResearch, setWebResearch] = useState(true);
 
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
         goal: meetingGoal.trim(),
         meeting_type: meetingType,
         duration_minutes: durationMinutes,
+        web_research: webResearch,
       },
       difficulty,
     });
@@ -359,6 +361,27 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
               </select>
             </div>
           </div>
+
+          {/* Live research opt-out (only takes effect when the server has a Tavily key) */}
+          <label
+            htmlFor="web-research"
+            style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", marginBottom: "1.25rem", cursor: "pointer" }}
+          >
+            <input
+              id="web-research"
+              type="checkbox"
+              checked={webResearch}
+              onChange={(e) => setWebResearch(e.target.checked)}
+              style={{ marginTop: "0.2rem" }}
+            />
+            <span>
+              <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>Use live web research on their company</span>
+              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                Searches recent public news about the company (not the person) to sharpen the objections. Sources are shown
+                on the briefing.
+              </span>
+            </span>
+          </label>
 
           {/* Difficulty Selector */}
           <div className="form-group" style={{ marginTop: "0.5rem" }}>
