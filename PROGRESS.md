@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 60/60, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-20 (`npm test` 83/83, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
@@ -71,6 +71,12 @@ Last verified: 2026-10-20 (`npm test` 60/60, `npm run typecheck` clean, `npm run
 - [x] Short-window limits: 20 requests/10s per IP across all routes, 30 AI requests/minute across all visitors (`GLOBAL_LLM_PER_MINUTE`), and one chat reply in flight per session (409 `BUSY`) (`tests/security.test.ts` #8–#10, `tests/chat.test.ts` #8–#10). On a production build the full flow ran with limits on, and 25 parallel requests gave exactly 20 × 200 and 5 × 429
 - [x] ~~Optional `ACCESS_CODE` gate~~: added, then removed at the user's request so the live demo is open; rate limits remain the protection
 - [x] `maxDuration` on AI routes (60s, evaluation 120s)
+
+## Stretch: Live Company Research (Tavily)
+- [x] Client: two parallel searches, 8s timeout, whole-word company filter, dedupe, never throws (`tests/research-client.test.ts`, 16 cases)
+- [x] App: research at the scenarios step feeds the objection map and the persona's headlines; web text fenced as untrusted; stored per session and restored on reload; 24h per-company cache; `RESEARCH_DAILY_LIMIT` cap; honest skipped/unavailable reasons (`tests/research.test.ts`, 7 cases)
+- [x] UI: sources panel on the briefing, opt-out checkbox; checked on a production build in replay mode, including phone width
+- [ ] Live check with a real `TAVILY_API_KEY` on a real company
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback

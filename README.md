@@ -31,6 +31,8 @@ npm run dev                    # http://localhost:3000
 | `RATE_LIMIT` | no | Per-IP request limits, `on` by default |
 | `GLOBAL_DAILY_LLM_LIMIT` | no | AI-backed requests per day across all visitors (500) |
 | `GLOBAL_LLM_PER_MINUTE` | no | AI-backed requests per minute across all visitors (30) |
+| `TAVILY_API_KEY` | no | Turns on live company research at the briefing step ([Tavily](https://app.tavily.com)) |
+| `RESEARCH_DAILY_LIMIT` | no | Live research runs per day across all visitors; cached repeats don't count (30) |
 
 There is no manual database step: tables are created on the first request. `npm run db:migrate` still exists if you want to create them ahead of time. To check your keys and model IDs, run `npm run llm:smoke`.
 
@@ -43,7 +45,7 @@ Then click **Load Marcus Vance (MD Benchmark)** on the first screen and follow t
 | Brief capability | Where it lives |
 |---|---|
 | Context ingestion and profiling | Paste-first form, plus a best-effort LinkedIn URL fetch. The AI builds the persona (background, technical depth, risk posture, priorities, hot buttons) and highlights fields it had to guess. You can edit any of them before sparring. |
-| Predictive scenario mapping | 4–6 objections across Risk/Compliance/Security, ROI/Financial, Implementation and Status Quo. Each has a trigger, probability, severity, underlying concern and counter-strategy. |
+| Predictive scenario mapping | 4–6 objections across Risk/Compliance/Security, ROI/Financial, Implementation and Status Quo. Each has a trigger, probability, severity, underlying concern and counter-strategy. With a Tavily key, recent public news about the counterpart's **company** grounds at least one objection in a real event, and is shown with its sources. |
 | Strategic question generation | 5–7 questions in phases (rapport, challenge, risk, decision criteria), each with a rationale and what to listen for. |
 | Interactive simulation | Streaming chat in which the AI stays in character and raises its private objection bank. Three difficulty levels, a live stance meter (skeptical → convinced / impatient), a turn cap, and optional voice in and out. |
 | Performance analytics and coaching | Four 1–10 scores, each backed by verbatim quotes from your own messages. Also: rewrites of your weakest turns, an **Objection Playbook** (what went wrong, a named framework, an example answer) and a printable 5-minute cheat sheet. |
@@ -84,6 +86,7 @@ Key files:
   - The "what you said" text always comes from the database, never from the AI.
   - The overall score is computed in code as the mean of the four dimensions.
 - **Stance is a second, small structured call** made after the streamed reply finishes (decision D2). Plain text streams fast, and the stance classification still gets schema validation.
+- **Live company research, not people research.** At the briefing step, two Tavily searches run in parallel on the counterpart's company (recent news, and challenges/regulation for their role). The person is never searched, which avoids profiling a private individual and same-name mix-ups. Results must mention the company as whole words, are deduped, and are shown as a sources panel. In the prompts the web text is fenced as untrusted data with an instruction to ignore anything that reads like an instruction, and the role-play only receives headlines. Research never blocks the briefing: no key, research turned off, an unknown company, the daily cap or a Tavily outage each show their reason instead. Results are cached per company for 24 hours, so a repeat adds no latency or cost; a fresh search adds about 1–3 seconds (8s timeout).
 - **Paste-first ingestion.** LinkedIn doesn't offer a public profile API to unauthenticated clients, so the URL fetch is best-effort and clearly labelled (see Limitations).
 - **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. Short-window limits stop bursts: at most 20 requests per 10 seconds from one IP, and 30 AI requests a minute across all visitors (the providers' own per-minute limits). Each session streams one chat reply at a time, so a double-send can't run parallel AI calls. Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
 - **Model IDs come only from the environment**, so a model deprecation is a config change, not a code change.
@@ -93,7 +96,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 60 Vitest cases across 9 files
+npm test            # 83 Vitest cases across 11 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -107,6 +110,7 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Router:** failover, repair retry, no switching providers mid-stream.
 - **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
+- **Live research:** the Tavily client (parallel requests, auth, filtering and whole-word company matching, dedupe, timeouts, 429/432/500/network failures, placeholder companies), and in the app: research stored and restored on reload, no key, turned off, unknown company, 24h cache not using the daily quota, an outage recorded without caching, and prompts fencing web text.
 - **Security:** per-IP hourly and burst limits and their reset, the global per-minute and daily AI caps, a route returning 429, a full normal session staying inside every limit, random session ids, no session listing.
 - **Chat lock:** two messages sent at once (one streams, one gets 409 `BUSY`), release after each reply and after a provider failure, an expired lock not blocking.
 
@@ -133,6 +137,7 @@ Failure path: remove both keys from `.env.local` and restart. Generating a perso
 - **Free-tier rate limits** on the providers can cause a temporary `LLM_UNAVAILABLE`; retrying works once the quota resets.
 - **Voice** uses the browser's Web Speech API (best in Chrome or Edge). It falls back to text where that API is unsupported.
 - **Rate limits are per IP**, so people behind one office or campus network share a limit.
+- **Live research only finds what's public and recent.** Small, private or fictional companies (including the Marcus Vance demo's Apex Financial Capital) usually return nothing, and the panel says so. Results can still be imperfect; the panel asks users to check the sources.
 
 ---
 
