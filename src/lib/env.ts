@@ -15,6 +15,8 @@ export const envSchema = z.object({
   DATABASE_AUTH_TOKEN: z.string().default(""),
   MAX_TURNS: z.coerce.number().int().min(2).max(30).default(10),
   LLM_MODE: z.enum(["live", "replay"]).default("live"),
+  // Optional shared code visitors must enter before using the app (empty = open access); enforced in src/middleware.ts
+  ACCESS_CODE: z.string().default(""),
   // Per-IP request limits (src/lib/rateLimit.ts); "off" is for tests and local debugging only
   RATE_LIMIT: z.enum(["on", "off"]).default("on"),
   // Cap on AI-backed requests from all visitors combined per UTC day, so rotating IPs can't drain the API keys

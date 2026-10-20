@@ -33,6 +33,12 @@ export function describeApiError(body: ApiErrorBody | null | undefined, fallback
         retryable: true,
         message: body?.message || "Too many requests. Please wait a few minutes and try again.",
       };
+    case "ACCESS_REQUIRED":
+      return {
+        code,
+        retryable: false,
+        message: body?.message || "Your access has expired. Reload the page and enter the access code.",
+      };
     case "SESSION_ENDED":
       return { code, retryable: false, message: "This simulation has already ended." };
     case "NOT_FOUND":

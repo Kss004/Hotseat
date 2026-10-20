@@ -69,6 +69,23 @@
         "DATABASE_URL": "file:./data/e2e.db",
         "RATE_LIMIT": "on"
       }
+    },
+    {
+      "name": "hotseat-prod-gated",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "replay",
+        "DATABASE_URL": "file:./data/e2e-gated.db",
+        "ACCESS_CODE": "local-check"
+      }
     }
   ]
 }
