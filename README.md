@@ -96,7 +96,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 83 Vitest cases across 11 files
+npm test            # 91 Vitest cases across 12 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -110,7 +110,8 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Router:** failover, repair retry, no switching providers mid-stream.
 - **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
-- **Live research:** the Tavily client (parallel requests, auth, filtering and whole-word company matching, dedupe, timeouts, 429/432/500/network failures, placeholder companies), and in the app: research stored and restored on reload, no key, turned off, unknown company, 24h cache not using the daily quota, an outage recorded without caching, and prompts fencing web text.
+- **Recent sessions:** the browser-only list adds, updates and forgets sessions, keeps at most 10, and ignores invalid or corrupted storage without throwing.
+- **Live research:** the Tavily client (parallel requests, auth, filtering, whole-word matching on the company or its parent brand ("HSBC UK" → "HSBC"), people/job-site exclusion, dedupe, timeouts, 429/432/500/network failures, placeholder companies), and in the app: research stored and restored on reload, no key, turned off, unknown company, 24h cache not using the daily quota, an outage recorded without caching, and prompts fencing web text.
 - **Security:** per-IP hourly and burst limits and their reset, the global per-minute and daily AI caps, a route returning 429, a full normal session staying inside every limit, random session ids, no session listing.
 - **Chat lock:** two messages sent at once (one streams, one gets 409 `BUSY`), release after each reply and after a provider failure, an expired lock not blocking.
 
@@ -133,7 +134,7 @@ Failure path: remove both keys from `.env.local` and restart. Generating a perso
 ## 7. Limitations
 
 - **LinkedIn:** a logged-out request usually hits LinkedIn's sign-in wall or its 999 bot block. When the fetch does work, it only gets the public headline and summary meta tags. The app says so on screen and asks you to paste the About and Experience text, which is the reliable path. Scraping behind a login would violate LinkedIn's terms, so it isn't attempted.
-- **No user accounts.** The app is open to anyone with the URL, and anyone with a session link can open that session (links are unguessable random ids). Rate limits, not logins, protect the API keys.
+- **No user accounts.** The app is open to anyone with the URL, and anyone with a session link can open that session (links are unguessable random ids). Rate limits, not logins, protect the API keys. Your own recent sessions are listed on the first screen from this browser's storage only; the server has no route that lists sessions.
 - **Free-tier rate limits** on the providers can cause a temporary `LLM_UNAVAILABLE`; retrying works once the quota resets.
 - **Voice** uses the browser's Web Speech API (best in Chrome or Edge). It falls back to text where that API is unsupported.
 - **Rate limits are per IP**, so people behind one office or campus network share a limit.

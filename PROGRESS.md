@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 83/83, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-20 (`npm test` 91/91, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
@@ -77,7 +77,12 @@ Last verified: 2026-10-20 (`npm test` 83/83, `npm run typecheck` clean, `npm run
 - [x] App: research at the scenarios step feeds the objection map and the persona's headlines; web text fenced as untrusted; stored per session and restored on reload; 24h per-company cache; `RESEARCH_DAILY_LIMIT` cap; honest skipped/unavailable reasons (`tests/research.test.ts`, 7 cases)
 - [x] UI: sources panel on the briefing, opt-out checkbox; checked on a production build in replay mode, including phone width
 - [x] Live check with a real `TAVILY_API_KEY` (2026-10-20): Barclays returned same-day news (a BoE inquiry) that two objections used, but also a named person's LinkedIn profile and job listings, so the second query dropped the job title and social, people-search and job sites are now excluded (sent to Tavily and filtered on every read, including the cache). Retest on HSBC: no people or job results, 3 objections drew on the findings, a repeat used the 24h cache, and the full flow evaluated at 7.3 with 11/11 verbatim quotes
-- [ ] Known gap: a division name such as "HSBC UK" only matches articles that use that exact phrase, so coverage that just says "HSBC" is dropped
+- [x] Parent-brand matching: a division name such as "HSBC UK" also matches coverage of "HSBC" (trailing region/division/legal words dropped, never below 4 characters); news searches use the brand
+
+## Final Polish
+- [x] Paste-first ingestion made explicit: profile field how-to, LinkedIn URL labelled an optional extra, cursor moves to the paste box when a fetch is blocked (checked in the browser against a real blocked LinkedIn request)
+- [x] Recent sessions listed on the first screen from browser storage only (`tests/recentSessions.test.ts`); open, score update, dead-entry removal and phone width checked on a production build
+- [x] `*.zip` and `submission/` ignored by git
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback
