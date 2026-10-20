@@ -12,6 +12,7 @@ import {
   type TechnicalDepth,
 } from "@/types";
 import { AppError, toErrorResponse, type ErrorCode } from "@/lib/errors";
+import { loadSessionResearch } from "@/lib/research";
 import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
@@ -106,6 +107,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       args: [sessionId],
     });
     const objections = scenariosRes.rows.length > 0 ? JSON.parse(scenariosRes.rows[0].objections as string) : [];
+    const research = await loadSessionResearch(sessionId);
 
     // One reply in flight per session: a double-send or a script can't run parallel AI calls on one session.
     // The lock expires on its own after LOCK_SEC, so a function killed mid-reply can't leave the session stuck.
@@ -154,6 +156,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       meeting: meetingContext,
       objections,
       difficulty,
+      research: research?.findings,
     });
 
     const router = getLLMRouter();

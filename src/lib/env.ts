@@ -21,6 +21,10 @@ export const envSchema = z.object({
   GLOBAL_DAILY_LLM_LIMIT: z.coerce.number().int().min(1).default(500),
   // Cap on AI-backed requests from all visitors combined per minute, to stay under the providers' own per-minute limits
   GLOBAL_LLM_PER_MINUTE: z.coerce.number().int().min(1).default(30),
+  // Optional Tavily key for live company research at the briefing step (empty = research off)
+  TAVILY_API_KEY: z.string().trim().default(""),
+  // Live research runs per UTC day across all visitors (cache hits don't count), to protect the Tavily plan's credits
+  RESEARCH_DAILY_LIMIT: z.coerce.number().int().min(1).default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;

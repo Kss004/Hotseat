@@ -61,6 +61,16 @@ function secondsUntil(resetAt: number): number {
 }
 
 /**
+ * Counts one use of a shared quota (e.g. the daily live-research budget) and returns false once it is used up.
+ * Always true when RATE_LIMIT is off.
+ */
+export async function tryConsumeQuota(key: string, limit: number, windowSec: number): Promise<boolean> {
+  if (getEnv().RATE_LIMIT === "off") return true;
+  const { count } = await hit(key, windowSec);
+  return count <= limit;
+}
+
+/**
  * Short-window burst limit per IP, shared by every API route. Normal use (one click at a time) stays far below it;
  * it stops scripts firing a whole hourly allowance in one second. Generous enough for a few people behind one NAT.
  */

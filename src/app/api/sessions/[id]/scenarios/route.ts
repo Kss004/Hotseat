@@ -15,6 +15,7 @@ import {
 } from "@/types";
 import { toErrorResponse, AppError } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rateLimit";
+import { researchForSession } from "@/lib/research";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
 export const maxDuration = 60;
@@ -63,10 +64,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       uncertain_fields: JSON.parse((p.uncertain_fields as string) || "[]"),
     };
 
-    // 3. Call LLM Router for single combined call
+    // 3. Live company research (Tavily). Never throws; skipped or failed research is reported, not faked
+    const research = await researchForSession(sessionId, persona, meetingContext);
+
+    // 4. Call LLM Router for single combined call
     const router = getLLMRouter();
     const systemPrompt = getScenariosSystemPrompt();
-    const userPrompt = getScenariosUserPrompt(persona, meetingContext);
+    const userPrompt = getScenariosUserPrompt(persona, meetingContext, research.findings);
 
     const result = await router.complete<ScenariosOutput>({
       purpose: "scenarios",
@@ -80,7 +84,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const scenarios = result.data;
     const scenariosId = `scen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // 4. Save to database
+    // 5. Save to database
     const saved = await db.execute({
       sql: `INSERT INTO scenarios (id, session_id, objections, strategic_questions)
             VALUES (?, ?, ?, ?)
@@ -96,7 +100,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ],
     });
 
-    // 5. Update session status
+    // 6. Update session status
     await db.execute({
       sql: `UPDATE sessions SET status = 'scenarios_ready' WHERE id = ?`,
       args: [sessionId],
@@ -109,6 +113,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         session_id: sessionId,
         ...scenarios,
       },
+      research,
       provider: result.provider,
       model: result.model,
     });

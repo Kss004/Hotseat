@@ -82,6 +82,23 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS research (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  reason TEXT,
+  queries TEXT NOT NULL DEFAULT '[]',
+  findings TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS research_cache (
+  company_key TEXT PRIMARY KEY,
+  reason TEXT,
+  queries TEXT NOT NULL,
+  findings TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS rate_limits (
   key TEXT PRIMARY KEY,
   window_start INTEGER NOT NULL,

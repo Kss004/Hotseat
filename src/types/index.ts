@@ -9,6 +9,8 @@ export const meetingContextSchema = z.object({
   goal: z.string().min(1, "Goal is required"),
   meeting_type: z.string().default("Enterprise Sales Pitch"),
   duration_minutes: z.coerce.number().int().positive().default(30),
+  // Live web research on the counterpart's company at the briefing step; missing (older sessions) counts as on
+  web_research: z.boolean().optional(),
 });
 
 export type MeetingContext = z.infer<typeof meetingContextSchema>;
@@ -103,6 +105,29 @@ export interface ScenariosRecord {
   session_id: string;
   objections: z.infer<typeof objectionSchema>[];
   strategic_questions: z.infer<typeof strategicQuestionSchema>[];
+}
+
+// ==========================================
+// Live Company Research (Tavily)
+// ==========================================
+
+/** Mirrors ResearchResult in src/lib/research/tavily.ts, which is server-only (it reads fixtures from disk). */
+export interface ResearchFindingRecord {
+  title: string;
+  url: string;
+  source: string;
+  snippet: string;
+  published_date?: string;
+}
+
+export type ResearchStatus = "ok" | "skipped" | "unavailable" | "not_configured";
+
+export interface ResearchRecord {
+  status: ResearchStatus;
+  reason?: string;
+  queries: string[];
+  findings: ResearchFindingRecord[];
+  cached?: boolean;
 }
 
 // ==========================================

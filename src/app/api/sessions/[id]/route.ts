@@ -3,6 +3,7 @@ import { getReadyDb } from "@/lib/db";
 import { EVALUATION_COLUMNS, rowToEvaluation } from "@/lib/evaluation";
 import { toErrorResponse } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rateLimit";
+import { loadSessionResearch } from "@/lib/research";
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
@@ -101,11 +102,15 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     });
     const evaluation = evalRes.rows.length > 0 ? rowToEvaluation(evalRes.rows[0], sessionId) : null;
 
+    // 6. Live research shown on the briefing, if it was run
+    const research = await loadSessionResearch(sessionId);
+
     return NextResponse.json({
       ok: true,
       session,
       persona,
       scenarios,
+      research,
       turns,
       evaluation,
     });
