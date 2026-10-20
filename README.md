@@ -2,7 +2,9 @@
 
 Hotseat prepares you for a high-stakes meeting. You give it the counterpart's profile and your meeting context. It builds an editable persona, predicts their objections, suggests strategic questions, plays the counterpart in a live streaming role-play, and then coaches you on clarity, confidence, structure and relevance. The coaching includes a named framework for the hardest pushback you faced, such as a budget objection.
 
-> Demo video: _add link_ · Live deployment: _add link_
+> **Live demo:** https://hotseat-lac.vercel.app (private; the access code is in the submission email) · **Demo video:** _add link_
+>
+> To try it: enter the access code, click **Load Marcus Vance (MD Benchmark)** and follow the demo script in section 6.
 
 ---
 
@@ -143,3 +145,9 @@ A local SQLite file doesn't persist on serverless hosts, so use a [Turso](https:
 4. Deploy. Tables are created on the first request. Then run the demo script on the live URL.
 
 Long AI routes declare their own time limits (`maxDuration`: 60s, and 120s for evaluation).
+
+The live instance runs exactly this setup: Vercel (Washington, D.C.) with a Turso database in AWS US East, OpenCode Go as the primary model, and `ACCESS_CODE` set. The full Marcus Vance demo was run there end to end on 2026-10-20: the evaluation finished in under a minute, and the report reloaded from the database.
+
+Two setup mistakes to avoid:
+- `DATABASE_AUTH_TOKEN` must be a **database** token (the database page → Create Token), not a Platform API token from Settings → API Tokens. The wrong one shows up as `LibsqlError: SERVER_ERROR: Server returned HTTP status 401` in the Vercel logs.
+- Environment variables only take effect after a redeploy.
