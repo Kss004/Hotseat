@@ -1,0 +1,47 @@
+{
+  "query": "\"Apex Financial Capital\" news",
+  "results": [
+    {
+      "title": "Apex Financial Capital discloses SOX material weakness in IT controls",
+      "url": "https://example-news.com/2026/apex-financial-capital-sox-weakness",
+      "content": "Apex Financial Capital disclosed a material weakness in IT general controls over financial reporting in its latest quarterly filing. The finding relates to access reviews for privileged accounts, and management says remediation is due before year end.",
+      "score": 0.91,
+      "published_date": "2026-09-14"
+    },
+    {
+      "title": "Apex Financial Capital moves core ledger to a cloud platform",
+      "url": "https://example-business.net/apex-financial-capital-cloud-migration",
+      "content": "Apex Financial Capital announced it will move its core ledger and customer data platform to a hosted cloud environment over the next eighteen months.   The programme is expected to shorten batch processing, though the CIO acknowledged the migration adds data-residency reviews.",
+      "score": 0.84,
+      "published_date": "2026-08-02"
+    },
+    {
+      "title": "Watchdog fines two asset managers over late breach notifications",
+      "url": "https://example-trade-press.com/2026/07/regulator-fines-asset-managers",
+      "content": "A financial services regulator fined two asset managers for late breach notifications, including Apex Financial Capital, which was penalised for a delay of more than 30 days. Industry commentators say the case signals tighter enforcement of incident-reporting rules.",
+      "score": 0.78,
+      "published_date": "2026-07-21"
+    },
+    {
+      "title": "Apex Financial Capital is hiring a Head of Third-Party Risk",
+      "url": "https://example-jobs.io/listings/apex-financial-capital-head-third-party-risk",
+      "content": "Apex Financial Capital is recruiting a Head of Third-Party Risk to lead vendor due diligence across its trading and wealth units. The role reports to the Chief Risk Officer and is posted for London and New York.",
+      "score": 0.52,
+      "published_date": "2026-09-30"
+    },
+    {
+      "title": "Nordic rail operator expands freight network",
+      "url": "https://example-logistics.com/nordic-rail-expansion",
+      "content": "A Nordic rail operator announced new freight routes connecting three ports, with service starting in the spring.",
+      "score": 0.88,
+      "published_date": "2026-09-02"
+    },
+    {
+      "title": "Apex Financial Capital discloses SOX material weakness in IT controls",
+      "url": "https://www.example-news.com/2026/apex-financial-capital-sox-weakness/",
+      "content": "Syndicated copy of the earlier audit-finding story.",
+      "score": 0.6,
+      "published_date": "2026-09-14"
+    }
+  ]
+}
