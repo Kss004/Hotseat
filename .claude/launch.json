@@ -52,6 +52,23 @@
         "LLM_MODE": "live",
         "DATABASE_URL": "file:./data/live-check.db"
       }
+    },
+    {
+      "name": "hotseat-prod-replay",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "replay",
+        "DATABASE_URL": "file:./data/e2e.db",
+        "RATE_LIMIT": "on"
+      }
     }
   ]
 }
