@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 47/47, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-20 (`npm test` 59/59, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
@@ -62,6 +62,14 @@ Last verified: 2026-10-20 (`npm test` 47/47, `npm run typecheck` clean, `npm run
   - Evaluation: technical answer credited and the pricing hedge penalised; playbook "Acknowledge, Baseline, Quantify, Commit".
   - LinkedIn fetch was blocked and showed the paste fallback, as designed.
   - Fixed after this run: evaluator prose said "Turn 3" where the UI says "message #2" (`tests/evaluate.test.ts` #9), and scores from 5 to 6.9 now read "Promising, Needs Sharpening" instead of "High Risk of Disqualification".
+
+## Deployment Hardening
+- [x] Removed `GET /api/sessions`, which listed the latest 50 sessions (profiles included) to anyone (`tests/security.test.ts` #1)
+- [x] Session ids are `sess_` + a random UUID instead of a timestamp (#2)
+- [x] Security headers: CSP, frame blocking, nosniff, referrer and permissions policies, HSTS in production; checked on a production build with no CSP violations
+- [x] Per-IP rate limits on every API route, stored in libSQL, plus a global daily cap on AI requests; 429 `RATE_LIMITED` (#3–#7; 31st `end` call in an hour returned 429 on a production build)
+- [x] Optional `ACCESS_CODE` gate: middleware redirect and 401, hashed httpOnly cookie, rate-limited guesses, no open redirect (#8–#12; checked in the browser on a production build)
+- [x] `maxDuration` on AI routes (60s, evaluation 120s)
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback

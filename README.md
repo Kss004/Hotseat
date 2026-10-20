@@ -26,6 +26,9 @@ npm run dev                    # http://localhost:3000
 | `DATABASE_URL` | no | Defaults to `file:./data/app.db`. Use `libsql://…` for Turso |
 | `DATABASE_AUTH_TOKEN` | Turso only | |
 | `MAX_TURNS` | no | Default user-turn cap per session (10) |
+| `ACCESS_CODE` | no | If set, visitors must enter this code first. Recommended for a public deployment |
+| `RATE_LIMIT` | no | Per-IP request limits, `on` by default |
+| `GLOBAL_DAILY_LLM_LIMIT` | no | AI-backed requests per day across all visitors (500) |
 
 There is no manual database step: tables are created on the first request. `npm run db:migrate` still exists if you want to create them ahead of time. To check your keys and model IDs, run `npm run llm:smoke`.
 
@@ -80,6 +83,7 @@ Key files:
   - The overall score is computed in code as the mean of the four dimensions.
 - **Stance is a second, small structured call** made after the streamed reply finishes (decision D2). Plain text streams fast, and the stance classification still gets schema validation.
 - **Paste-first ingestion.** LinkedIn doesn't offer a public profile API to unauthenticated clients, so the URL fetch is best-effort and clearly labelled (see Limitations).
+- **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. An optional `ACCESS_CODE` puts the whole app behind a code (httpOnly cookie holding a hash of the code; guesses are rate-limited). Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
 - **Model IDs come only from the environment**, so a model deprecation is a config change, not a code change.
 
 ---
@@ -87,7 +91,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 47 Vitest cases across 8 files
+npm test            # 59 Vitest cases across 9 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -101,6 +105,7 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Router:** failover, repair retry, no switching providers mid-stream.
 - **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
+- **Security:** per-IP limits and their reset, the global daily AI cap, a route returning 429, the access-code redirect and 401, cookie handling, the open-redirect guard, random session ids, no session listing.
 
 The replay fixtures exercise everything except the models themselves. Output quality is checked manually with `llm:smoke` and the demo script below.
 
@@ -121,7 +126,20 @@ Failure path: remove both keys from `.env.local` and restart. Generating a perso
 ## 7. Limitations
 
 - **LinkedIn:** a logged-out request usually hits LinkedIn's sign-in wall or its 999 bot block. When the fetch does work, it only gets the public headline and summary meta tags. The app says so on screen and asks you to paste the About and Experience text, which is the reliable path. Scraping behind a login would violate LinkedIn's terms, so it isn't attempted.
-- **Single user, no authentication.** Anyone with a session link can open that session.
+- **No user accounts.** Anyone with a session link can open that session (links are unguessable random ids). `ACCESS_CODE` keeps strangers out of the whole app, but everyone who has the code shares it.
 - **Free-tier rate limits** on the providers can cause a temporary `LLM_UNAVAILABLE`; retrying works once the quota resets.
 - **Voice** uses the browser's Web Speech API (best in Chrome or Edge). It falls back to text where that API is unsupported.
-- **Deployment:** on serverless hosts (for example Vercel) use Turso (`DATABASE_URL=libsql://…` plus `DATABASE_AUTH_TOKEN`), because a local SQLite file doesn't persist there.
+- **Rate limits are per IP**, so people behind one office or campus network share a limit.
+
+---
+
+## 8. Deployment (Vercel + Turso)
+
+A local SQLite file doesn't persist on serverless hosts, so use a [Turso](https://turso.tech) database.
+
+1. Create a Turso database and copy its `libsql://…` URL and an auth token.
+2. Import the GitHub repo into [Vercel](https://vercel.com/new). The defaults (Next.js, `npm run build`) are correct.
+3. Add environment variables: at least one provider key with its model ID (see section 1), `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, and `ACCESS_CODE` if the URL will be shared. Leave `LLM_MODE` unset or `live`.
+4. Deploy. Tables are created on the first request. Then run the demo script on the live URL.
+
+Long AI routes declare their own time limits (`maxDuration`: 60s, and 120s for evaluation).
