@@ -38,12 +38,15 @@ describe("OpenCode Go provider", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const res = await new OpenCodeProvider().complete("sys", "hi", true);
+    const res = await new OpenCodeProvider().complete("sys", "hi", true, "sess_abc");
 
     expect(res).toMatchObject({ rawText: '{"ok":true}', provider: "opencode", model: "deepseek-v4.1-flash" });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://opencode.ai/inference/go/openai/v1/chat/completions");
     expect(init.headers.Authorization).toBe("Bearer test-key");
+    // The Go gateway returns 400 MissingSessionID without this; the app session is the conversation ID
+    expect(init.headers["x-opencode-session"]).toBe("sess_abc");
+    expect(init.headers["User-Agent"]).toBe("hotseat/0.1");
     const body = JSON.parse(init.body);
     expect(body.model).toBe("deepseek-v4.1-flash");
     expect(body.response_format).toEqual({ type: "json_object" });

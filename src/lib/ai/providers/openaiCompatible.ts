@@ -17,14 +17,24 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     return url.replace(/\/$/, "");
   }
 
-  private getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  /** Provider-specific headers (e.g. routing by conversation). */
+  protected extraHeaders(_sessionId?: string | null): Record<string, string> {
+    return {};
+  }
+
+  private getHeaders(sessionId?: string | null): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...this.extraHeaders(sessionId) };
     const key = this.getApiKey();
     if (key) headers.Authorization = `Bearer ${key}`;
     return headers;
   }
 
-  async complete(system: string, user: string, jsonMode: boolean = false): Promise<ProviderResponse> {
+  async complete(
+    system: string,
+    user: string,
+    jsonMode: boolean = false,
+    sessionId?: string | null
+  ): Promise<ProviderResponse> {
     const messages: Array<{ role: "system" | "user"; content: string }> = [];
     if (system) {
       messages.push({ role: "system", content: system });
@@ -34,7 +44,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     const startTime = Date.now();
     const res = await fetch(`${this.getBaseUrl()}/chat/completions`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: this.getHeaders(sessionId),
       body: JSON.stringify({
         model: this.getModel(),
         messages,
@@ -58,7 +68,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     };
   }
 
-  async *stream(system: string, messages: LLMMessage[]): AsyncGenerator<string, void, unknown> {
+  async *stream(
+    system: string,
+    messages: LLMMessage[],
+    sessionId?: string | null
+  ): AsyncGenerator<string, void, unknown> {
     const formattedMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
     if (system) {
       formattedMessages.push({ role: "system", content: system });
@@ -69,7 +83,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
 
     const res = await fetch(`${this.getBaseUrl()}/chat/completions`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: this.getHeaders(sessionId),
       body: JSON.stringify({
         model: this.getModel(),
         messages: formattedMessages,

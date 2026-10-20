@@ -34,6 +34,7 @@ export interface LLMProvider {
   name: string;
   getModel(): string;
   isAvailable(): boolean;
-  complete(system: string, user: string, jsonMode?: boolean): Promise<ProviderResponse>;
-  stream(system: string, messages: LLMMessage[]): AsyncGenerator<string, void, unknown>;
+  // sessionId is the app session the call belongs to; providers that route by conversation (OpenCode Go) use it
+  complete(system: string, user: string, jsonMode?: boolean, sessionId?: string | null): Promise<ProviderResponse>;
+  stream(system: string, messages: LLMMessage[], sessionId?: string | null): AsyncGenerator<string, void, unknown>;
 }

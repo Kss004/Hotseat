@@ -1,11 +1,12 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 42/42, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-20 (`npm test` 46/46, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
 ## Verified Working Model IDs
+- **OpenCode Go (`OPENCODE_MODEL`)**: `deepseek-v4.1-flash`, primary provider, which passed `llm:smoke` (JSON and streaming) on 2026-10-20. The Go gateway returns 400 `MissingSessionID` unless each request carries `x-opencode-session`. The app sends its session ID there, plus a `hotseat/0.1` user agent, as the Go docs ask (`tests/opencode.test.ts`).
 - **Gemini (`GEMINI_MODEL`)**: `gemini-2.5-flash`, which passed `llm:smoke` on 2026-10-20. The free-tier key then hit 429 quota limits, and every call in the live run below failed over to Groq.
 - **Groq (`GROQ_MODEL`)**: `openai/gpt-oss-120b`, which passed `llm:smoke` on 2026-10-20. `llama-3.3-70b-versatile` returned 404 `model_not_found` for this account, so it was replaced via env only, with no code change.
 
@@ -15,7 +16,7 @@ Last verified: 2026-10-20 (`npm test` 42/42, `npm run typecheck` clean, `npm run
 - [x] Next.js App Router, TypeScript strict, vanilla CSS design system (no Tailwind)
 - [x] libSQL client; idempotent schema plus additive column migrations, auto-applied on first request (`getReadyDb`)
 - [x] Env schema; model IDs read only from env; `DATABASE_AUTH_TOKEN` for Turso
-- [x] LLM router: Gemini → Groq → local; Zod validation plus one repair retry; failover before first token only (`tests/router.test.ts`)
+- [x] LLM router: OpenCode Go → Gemini → Groq → local; Zod validation plus one repair retry; failover before first token only (`tests/router.test.ts`)
 - [x] `llm_calls` logging; client-safe error messages (upstream detail logged server-side only)
 - [x] Replay mode (`LLM_MODE=replay`) from `fixtures/llm/`, used by route-level tests
 - [x] `npm run llm:smoke` against live keys (both providers passed individually; see model IDs above)

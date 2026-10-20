@@ -114,7 +114,7 @@ export class LLMRouter {
     for (let i = 0; i < availableProviders.length; i++) {
       const provider = availableProviders[i];
       try {
-        const response = await provider.complete(options.system, options.user, true);
+        const response = await provider.complete(options.system, options.user, true, options.sessionId);
 
         // Attempt JSON parse and validation
         const validated = await this.validateOrRepair(provider, options, response);
@@ -210,7 +210,7 @@ ${response.rawText}
 Please correct the errors and output strictly valid JSON matching the schema.`;
 
     try {
-      const repairResponse = await provider.complete(repairSystem, repairUser, true);
+      const repairResponse = await provider.complete(repairSystem, repairUser, true, options.sessionId);
       let repairCleaned = repairResponse.rawText.trim();
       if (repairCleaned.startsWith("```json")) {
         repairCleaned = repairCleaned.slice(7);
@@ -275,7 +275,7 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
       let emittedAnyToken = false;
 
       try {
-        const streamGenerator = provider.stream(options.system, options.messages);
+        const streamGenerator = provider.stream(options.system, options.messages, options.sessionId);
         const startTime = Date.now();
 
         for await (const chunk of streamGenerator) {
