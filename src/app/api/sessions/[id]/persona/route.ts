@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getReadyDb } from "@/lib/db";
 import { getLLMRouter } from "@/lib/ai/router";
 import {
   getPersonaSystemPrompt,
@@ -12,7 +12,7 @@ import { toErrorResponse, AppError } from "@/lib/errors";
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const sessionId = params.id;
-    const db = getDb();
+    const db = await getReadyDb();
 
     // 1. Fetch session
     const sessionRes = await db.execute({
@@ -50,8 +50,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const persona = llmResult.data;
     const personaId = `pers_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // 3. Upsert into personas table
-    await db.execute({
+    // 3. Upsert into personas table (RETURNING gives the stored id, which differs from personaId on regenerate)
+    const saved = await db.execute({
       sql: `INSERT INTO personas (
               id, session_id, name, title, company, background,
               risk_posture, technical_depth, business_priorities,
@@ -70,7 +70,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
               conversational_style = excluded.conversational_style,
               uncertain_fields = excluded.uncertain_fields,
               edited_by_user = 0,
-              updated_at = CURRENT_TIMESTAMP`,
+              updated_at = CURRENT_TIMESTAMP
+            RETURNING id`,
       args: [
         personaId,
         sessionId,
@@ -96,7 +97,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({
       ok: true,
       persona: {
-        id: personaId,
+        id: saved.rows[0].id as string,
         session_id: sessionId,
         ...persona,
         edited_by_user: false,
@@ -128,7 +129,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       );
     }
 
-    const db = getDb();
+    const db = await getReadyDb();
     const updated = parsed.data;
 
     // Check if persona exists for session

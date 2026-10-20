@@ -8,6 +8,7 @@ import { BriefingView } from "@/components/BriefingView";
 import { SparringArena } from "@/components/SparringArena";
 import { AnalyticsReport } from "@/components/AnalyticsReport";
 import type { Session, PersonaRecord, ScenariosRecord, Turn, EvaluationRecord } from "@/types";
+import { describeApiError, readJson } from "@/lib/apiErrors";
 
 type WorkflowStage = "ingest" | "persona" | "briefing" | "sparring" | "analytics";
 
@@ -20,23 +21,43 @@ export default function Home() {
   const [evaluation, setEvaluation] = useState<EvaluationRecord | null>(null);
   const [isLoadingScenarios, setIsLoadingScenarios] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
-  const [globalError, setGlobalError] = useState<string | null>(null);
+  // True until the ?session= lookup finishes, so the ingest form doesn't flash before a saved stage
+  const [isRestoring, setIsRestoring] = useState(true);
+  const [globalError, setGlobalError] = useState<{ message: string; retry?: () => void } | null>(null);
 
   // Check URL on load for session resume: ?session=...
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sid = params.get("session");
     if (sid) {
-      loadExistingSession(sid);
+      loadExistingSession(sid).finally(() => setIsRestoring(false));
+    } else {
+      setIsRestoring(false);
     }
+    const onPopState = () => window.location.reload();
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadExistingSession = async (sid: string) => {
     try {
       const res = await fetch(`/api/sessions/${sid}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.ok) {
+      const data = await readJson<{
+        ok: boolean;
+        session: Session;
+        persona: PersonaRecord | null;
+        scenarios: ScenariosRecord | null;
+        turns: Turn[];
+        evaluation: EvaluationRecord | null;
+        code?: string;
+        message?: string;
+      }>(res);
+      if (!res.ok || !data?.ok) {
+        setGlobalError({ message: `${describeApiError(data, "Could not restore that session.").message} Starting a new preparation instead.` });
+        return;
+      }
+      {
         setSession(data.session);
         if (data.persona) setPersona(data.persona);
         if (data.scenarios) setScenarios(data.scenarios);
@@ -51,10 +72,12 @@ export default function Home() {
           setStage("briefing");
         } else if (data.persona) {
           setStage("persona");
+        } else {
+          setGlobalError({ message: "This session never got a persona (generation failed). Fill in the form to start again." });
         }
       }
-    } catch (err) {
-      console.warn("Could not restore session:", err);
+    } catch {
+      setGlobalError({ message: "Could not reach the server to restore your session." });
     }
   };
 
@@ -72,7 +95,7 @@ export default function Home() {
   };
 
   const handleConfirmPersona = async () => {
-    if (!session || !persona) return;
+    if (!session || !persona || isLoadingScenarios) return;
     setIsLoadingScenarios(true);
     setGlobalError(null);
 
@@ -82,15 +105,17 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to generate scenarios");
+      const data = await readJson<{ scenarios: ScenariosRecord; code?: string; message?: string }>(res);
+      if (!res.ok || !data?.scenarios) {
+        const err = describeApiError(data, "Failed to generate the scenario briefing.");
+        setGlobalError({ message: err.message, retry: err.retryable ? handleConfirmPersona : undefined });
+        return;
       }
 
       setScenarios(data.scenarios);
       setStage("briefing");
-    } catch (err: unknown) {
-      setGlobalError(err instanceof Error ? err.message : "Error generating scenario playbook");
+    } catch {
+      setGlobalError({ message: "Could not reach the server.", retry: handleConfirmPersona });
     } finally {
       setIsLoadingScenarios(false);
     }
@@ -101,34 +126,27 @@ export default function Home() {
   };
 
   const handleEndSimulation = async () => {
-    if (!session) return;
+    if (!session || isEvaluating) return;
     setIsEvaluating(true);
     setGlobalError(null);
 
     try {
-      // 1. Close simulation in backend
-      await fetch(`/api/sessions/${session.id}/end`, { method: "POST" });
-
-      // 2. Run evaluator
+      // The evaluate route closes the session on success, so a failed evaluation leaves sparring open
       const res = await fetch(`/api/sessions/${session.id}/evaluate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.code === "INSUFFICIENT_TURNS") {
-          setGlobalError("Evaluation requires at least 2 conversational user messages. Please spar for another turn.");
-          setIsEvaluating(false);
-          return;
-        }
-        throw new Error(data.message || "Failed to evaluate performance");
+      const data = await readJson<{ evaluation: EvaluationRecord; code?: string; message?: string }>(res);
+      if (!res.ok || !data?.evaluation) {
+        const err = describeApiError(data, "Failed to evaluate your performance.");
+        setGlobalError({ message: err.message, retry: err.retryable ? handleEndSimulation : undefined });
+        return;
       }
 
       setEvaluation(data.evaluation);
       setStage("analytics");
-    } catch (err: unknown) {
-      setGlobalError(err instanceof Error ? err.message : "Error generating evaluation report");
+    } catch {
+      setGlobalError({ message: "Could not reach the server.", retry: handleEndSimulation });
     } finally {
       setIsEvaluating(false);
     }
@@ -172,23 +190,38 @@ export default function Home() {
             flexWrap: "wrap",
           }}
         >
-          <span style={{ color: stage === "ingest" ? "var(--accent-gold)" : "var(--text-muted)" }}>
+          <span
+            aria-current={stage === "ingest" ? "step" : undefined}
+            style={{ color: stage === "ingest" ? "var(--accent-gold)" : "var(--text-muted)" }}
+          >
             1. Ingestion & Context
           </span>
           <span style={{ color: "var(--border-medium)" }}>→</span>
-          <span style={{ color: stage === "persona" ? "var(--accent-gold)" : "var(--text-muted)" }}>
+          <span
+            aria-current={stage === "persona" ? "step" : undefined}
+            style={{ color: stage === "persona" ? "var(--accent-gold)" : "var(--text-muted)" }}
+          >
             2. Persona Dossier
           </span>
           <span style={{ color: "var(--border-medium)" }}>→</span>
-          <span style={{ color: stage === "briefing" ? "var(--accent-gold)" : "var(--text-muted)" }}>
+          <span
+            aria-current={stage === "briefing" ? "step" : undefined}
+            style={{ color: stage === "briefing" ? "var(--accent-gold)" : "var(--text-muted)" }}
+          >
             3. Tactical Briefing
           </span>
           <span style={{ color: "var(--border-medium)" }}>→</span>
-          <span style={{ color: stage === "sparring" ? "var(--accent-gold)" : "var(--text-muted)" }}>
+          <span
+            aria-current={stage === "sparring" ? "step" : undefined}
+            style={{ color: stage === "sparring" ? "var(--accent-gold)" : "var(--text-muted)" }}
+          >
             4. Live Sparring Arena
           </span>
           <span style={{ color: "var(--border-medium)" }}>→</span>
-          <span style={{ color: stage === "analytics" ? "var(--accent-gold)" : "var(--text-muted)" }}>
+          <span
+            aria-current={stage === "analytics" ? "step" : undefined}
+            style={{ color: stage === "analytics" ? "var(--accent-gold)" : "var(--text-muted)" }}
+          >
             5. Performance Report
           </span>
         </div>
@@ -198,6 +231,7 @@ export default function Home() {
       <main className="container" style={{ flex: 1, padding: "2.5rem 1.5rem" }}>
         {globalError && (
           <div
+            role="alert"
             style={{
               maxWidth: "900px",
               margin: "0 auto 1.5rem",
@@ -207,19 +241,54 @@ export default function Home() {
               borderRadius: "var(--radius-md)",
               color: "#fecdd3",
               fontSize: "0.9rem",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "1rem",
+              flexWrap: "wrap",
             }}
           >
-            ⚠️ {globalError}
+            <span>⚠️ {globalError.message}</span>
+            <span style={{ display: "flex", gap: "0.5rem" }}>
+              {globalError.retry && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  id="btn-global-retry"
+                  onClick={globalError.retry}
+                  disabled={isEvaluating || isLoadingScenarios}
+                  style={{ fontSize: "0.8rem", padding: "0.35rem 0.8rem" }}
+                >
+                  ↻ Retry
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                aria-label="Dismiss error"
+                onClick={() => setGlobalError(null)}
+                style={{ fontSize: "0.8rem", padding: "0.35rem 0.6rem" }}
+              >
+                ✕
+              </button>
+            </span>
           </div>
         )}
 
-        {stage === "ingest" && <IngestionForm onSuccess={handleIngestSuccess} />}
+        {isRestoring && (
+          <div role="status" style={{ textAlign: "center", padding: "4rem 1rem", color: "var(--text-muted)" }}>
+            Restoring your session…
+          </div>
+        )}
+
+        {!isRestoring && stage === "ingest" && <IngestionForm onSuccess={handleIngestSuccess} />}
 
         {stage === "persona" && persona && session && (
           <div>
             <PersonaCard
               sessionId={session.id}
               initialPersona={persona}
+              isContinuing={isLoadingScenarios}
               onContinue={handleConfirmPersona}
             />
             {isLoadingScenarios && (
@@ -246,6 +315,7 @@ export default function Home() {
               difficulty={session.difficulty}
               maxTurns={session.max_turns}
               initialTurns={turns}
+              isEvaluating={isEvaluating}
               onEndSimulation={handleEndSimulation}
             />
             {isEvaluating && (

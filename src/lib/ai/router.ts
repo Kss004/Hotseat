@@ -1,11 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { getEnv } from "@/lib/env";
-import { getDb } from "@/lib/db";
+import { getReadyDb } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { GeminiProvider } from "./providers/gemini";
 import { GroqProvider } from "./providers/groq";
 import { LocalProvider } from "./providers/local";
+import { OpenCodeProvider } from "./providers/opencode";
 import type {
   CompleteOptions,
   LLMProvider,
@@ -22,6 +23,7 @@ export class LLMRouter {
       this.providers = customProviders;
     } else {
       this.providers = [
+        new OpenCodeProvider(),
         new GeminiProvider(),
         new GroqProvider(),
         new LocalProvider(),
@@ -40,7 +42,7 @@ export class LLMRouter {
     errorCode?: string | null;
   }) {
     try {
-      const db = getDb();
+      const db = await getReadyDb();
       const id = `llm_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       await db.execute({
         sql: `INSERT INTO llm_calls (id, session_id, purpose, provider, model, prompt_version, latency_ms, status, error_code)
@@ -68,7 +70,8 @@ export class LLMRouter {
     if (!fs.existsSync(fixturePath)) {
       throw new AppError(
         "LLM_UNAVAILABLE",
-        `Replay fixture not found for purpose '${purpose}' at fixtures/llm/${purpose}.json`
+        `Replay fixture not found for purpose '${purpose}' at fixtures/llm/${purpose}.json`,
+        500
       );
     }
     const content = fs.readFileSync(fixturePath, "utf-8");
@@ -99,7 +102,11 @@ export class LLMRouter {
         status: "error",
         errorCode: "NO_PROVIDERS_CONFIGURED",
       });
-      throw new AppError("LLM_UNAVAILABLE", "No LLM providers are configured with active API keys.", 503);
+      throw new AppError(
+        "LLM_UNAVAILABLE",
+        "No AI provider is configured. Set OPENCODE_API_KEY, GEMINI_API_KEY and/or GROQ_API_KEY in .env.local and restart the server.",
+        503
+      );
     }
 
     let lastError: unknown = null;
@@ -131,20 +138,7 @@ export class LLMRouter {
         lastError = err;
         const errMessage = err instanceof Error ? err.message : String(err);
 
-        // If it's an explicit validation/repair exhaustion, do not failover across providers if the output was unfixable
-        if (err instanceof AppError && err.code === "LLM_INVALID_OUTPUT") {
-          await this.logCall({
-            sessionId: options.sessionId,
-            purpose: options.purpose,
-            provider: provider.name,
-            model: provider.getModel(),
-            promptVersion: options.promptVersion,
-            status: "error",
-            errorCode: "LLM_INVALID_OUTPUT",
-          });
-          throw err;
-        }
-
+        // Invalid output (after this provider's single repair retry) also fails over: a different model may comply.
         await this.logCall({
           sessionId: options.sessionId,
           purpose: options.purpose,
@@ -152,16 +146,20 @@ export class LLMRouter {
           model: provider.getModel(),
           promptVersion: options.promptVersion,
           status: i < availableProviders.length - 1 ? "failover" : "error",
-          errorCode: errMessage.slice(0, 100),
+          errorCode: err instanceof AppError ? err.code : errMessage.slice(0, 100),
         });
 
         console.warn(`Provider ${provider.name} failed: ${errMessage}. Trying fallback if available.`);
       }
     }
 
+    if (lastError instanceof AppError && lastError.code === "LLM_INVALID_OUTPUT") {
+      throw lastError;
+    }
+    // Upstream detail is logged above and in llm_calls; the client gets an honest, non-leaky message
     throw new AppError(
       "LLM_UNAVAILABLE",
-      `All available LLM providers failed. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      "All AI providers failed to respond. This is usually a temporary rate limit; please retry in a moment.",
       503
     );
   }
@@ -231,9 +229,10 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
       }
       throw new Error(`Repaired output still invalid: ${repairedParsed.error.message}`);
     } catch (retryErr) {
+      console.warn(`Repair retry failed on ${provider.name}:`, retryErr);
       throw new AppError(
         "LLM_INVALID_OUTPUT",
-        `LLM output failed validation and could not be repaired. Detail: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+        "The AI returned a malformed response twice. Please retry.",
         502
       );
     }
@@ -262,7 +261,11 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
         status: "error",
         errorCode: "NO_PROVIDERS_CONFIGURED",
       });
-      throw new AppError("LLM_UNAVAILABLE", "No LLM providers are configured with active API keys.", 503);
+      throw new AppError(
+        "LLM_UNAVAILABLE",
+        "No AI provider is configured. Set OPENCODE_API_KEY, GEMINI_API_KEY and/or GROQ_API_KEY in .env.local and restart the server.",
+        503
+      );
     }
 
     let lastError: unknown = null;
@@ -299,7 +302,7 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
         // Failover rule: fail over ONLY if no token has been emitted yet!
         if (emittedAnyToken) {
           console.error(`Stream error after token emission on ${provider.name}:`, err);
-          throw new AppError("LLM_UNAVAILABLE", `Stream interrupted mid-generation: ${errMessage}`, 502);
+          throw new AppError("LLM_UNAVAILABLE", "The AI provider dropped the connection mid-reply. Please retry.", 502);
         }
 
         await this.logCall({
@@ -316,9 +319,10 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
       }
     }
 
+    console.error("All streaming providers failed. Last error:", lastError);
     throw new AppError(
       "LLM_UNAVAILABLE",
-      `All available LLM streaming providers failed. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      "All AI providers failed to respond. This is usually a temporary rate limit; please retry in a moment.",
       503
     );
   }

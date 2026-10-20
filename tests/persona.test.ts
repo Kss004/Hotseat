@@ -1,102 +1,56 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { getDb, runMigrations } from "@/lib/db";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { personaSchema } from "@/types";
+import { POST as personaPOST, PATCH as personaPATCH } from "@/app/api/sessions/[id]/persona/route";
+import { GET as sessionGET } from "@/app/api/sessions/[id]/route";
+import fixturePersona from "../fixtures/llm/persona.json";
+import { createSession, jsonRequest, params, resetDb, useLiveMode, useReplayMode } from "./helpers";
 
-describe("Step 2: Persona Schema & Persistence Integration", () => {
-  beforeAll(async () => {
-    await runMigrations();
+describe("Step 2: Persona generation & editable persona card", () => {
+  beforeAll(() => useReplayMode());
+  afterAll(() => useLiveMode());
+  beforeEach(() => resetDb());
+
+  it("1. Persona schema rejects missing fields and out-of-enum values", () => {
+    expect(personaSchema.safeParse(fixturePersona).success).toBe(true);
+    expect(personaSchema.safeParse({ ...fixturePersona, risk_posture: "reckless" }).success).toBe(false);
+    expect(personaSchema.safeParse({ ...fixturePersona, business_priorities: [] }).success).toBe(false);
   });
 
-  it("1. Validates persona schema strictly", () => {
-    const valid = {
-      name: "Marcus Vance",
-      title: "Managing Director of Operational Risk",
-      company: "Apex Financial",
-      background: "Former Deloitte partner, 18 years in banking governance.",
-      risk_posture: "risk_averse",
-      technical_depth: "high",
-      business_priorities: ["SOC2 compliance", "Audit logging"],
-      hot_buttons: ["Vague buzzwords"],
-      conversational_style: "Skeptical, direct, rigorous",
-      uncertain_fields: ["technical_depth"],
-    };
+  it("2. POST generates and stores the persona, returning the stored id", async () => {
+    const sessionId = await createSession();
+    const res = await personaPOST(jsonRequest({}), params(sessionId));
+    expect(res.status).toBe(200);
+    const { persona } = await res.json();
+    expect(persona.risk_posture).toBe("risk_averse");
 
-    const parsed = personaSchema.safeParse(valid);
-    expect(parsed.success).toBe(true);
-
-    const invalid = {
-      ...valid,
-      risk_posture: "unknown_posture", // invalid enum
-    };
-    const invalidParsed = personaSchema.safeParse(invalid);
-    expect(invalidParsed.success).toBe(false);
+    // Regenerating keeps one row per session and reports that row's id
+    const again = await (await personaPOST(jsonRequest({}), params(sessionId))).json();
+    expect(again.persona.id).toBe(persona.id);
   });
 
-  it("2. Persists persona and updates edited_by_user on PATCH", async () => {
-    const db = getDb();
-    const sessionId = `test_sess_${Date.now()}`;
+  it("3. PATCH edits persist through a reload with edited_by_user = 1", async () => {
+    const sessionId = await createSession();
+    await personaPOST(jsonRequest({}), params(sessionId));
 
-    // Insert session
-    await db.execute({
-      sql: `INSERT INTO sessions (id, title, raw_input, meeting_context, difficulty, max_turns, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        sessionId,
-        "Test Session",
-        "Raw input text for Marcus Vance with risk compliance background exceeding 80 characters.",
-        JSON.stringify({ product_summary: "AutoFlow", goal: "Pilot", meeting_type: "Pitch", duration_minutes: 30 }),
-        "realistic",
-        10,
-        "draft",
-      ],
-    });
+    const edited = { ...fixturePersona, hot_buttons: ["Hand-wavy security answers"], technical_depth: "moderate" };
+    const res = await personaPATCH(jsonRequest(edited, "PATCH"), params(sessionId));
+    expect(res.status).toBe(200);
 
-    const personaId = `pers_${Date.now()}`;
-    // Insert initial generated persona
-    await db.execute({
-      sql: `INSERT INTO personas (
-              id, session_id, name, title, company, background,
-              risk_posture, technical_depth, business_priorities,
-              hot_buttons, conversational_style, uncertain_fields, edited_by_user
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-      args: [
-        personaId,
-        sessionId,
-        "Marcus Vance",
-        "Managing Director",
-        "Apex Financial",
-        "Risk background",
-        "risk_averse",
-        "high",
-        JSON.stringify(["Security"]),
-        JSON.stringify(["Buzzwords"]),
-        "Direct",
-        JSON.stringify(["technical_depth"]),
-      ],
-    });
+    const reloaded = await (await sessionGET(jsonRequest({}, "GET"), params(sessionId))).json();
+    expect(reloaded.persona.hot_buttons).toEqual(["Hand-wavy security answers"]);
+    expect(reloaded.persona.technical_depth).toBe("moderate");
+    expect(Number(reloaded.persona.edited_by_user)).toBe(1);
+  });
 
-    // Check initial persona
-    const initialRes = await db.execute({
-      sql: `SELECT edited_by_user, title FROM personas WHERE session_id = ?`,
-      args: [sessionId],
-    });
-    expect(Number(initialRes.rows[0].edited_by_user)).toBe(0);
-    expect(initialRes.rows[0].title).toBe("Managing Director");
+  it("4. PATCH rejects invalid edits with VALIDATION and leaves the stored persona unchanged", async () => {
+    const sessionId = await createSession();
+    await personaPOST(jsonRequest({}), params(sessionId));
 
-    // Perform user edit (simulate PATCH)
-    await db.execute({
-      sql: `UPDATE personas
-            SET title = ?, edited_by_user = 1, updated_at = CURRENT_TIMESTAMP
-            WHERE session_id = ?`,
-      args: ["Executive Managing Director - Global Risk", sessionId],
-    });
+    const res = await personaPATCH(jsonRequest({ ...fixturePersona, name: "" }, "PATCH"), params(sessionId));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION");
 
-    // Verify edits survived and persisted
-    const updatedRes = await db.execute({
-      sql: `SELECT edited_by_user, title FROM personas WHERE session_id = ?`,
-      args: [sessionId],
-    });
-    expect(Number(updatedRes.rows[0].edited_by_user)).toBe(1);
-    expect(updatedRes.rows[0].title).toBe("Executive Managing Director - Global Risk");
+    const reloaded = await (await sessionGET(jsonRequest({}, "GET"), params(sessionId))).json();
+    expect(reloaded.persona.name).toBe(fixturePersona.name);
   });
 });

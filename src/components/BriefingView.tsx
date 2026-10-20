@@ -10,17 +10,17 @@ interface BriefingViewProps {
 }
 
 export function BriefingView({ scenarios, difficulty, onStartSparring }: BriefingViewProps) {
-  const [copiedQuestionIdx, setCopiedQuestionIdx] = useState<number | null>(null);
+  const [copyState, setCopyState] = useState<{ idx: number; ok: boolean } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
   const copyToClipboard = async (text: string, idx: number) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedQuestionIdx(idx);
-      setTimeout(() => setCopiedQuestionIdx(null), 2000);
+      setCopyState({ idx, ok: true });
     } catch {
-      // Fallback
+      setCopyState({ idx, ok: false });
     }
+    setTimeout(() => setCopyState((current) => (current?.idx === idx ? null : current)), 2000);
   };
 
   const getCategoryBadgeClass = (category: string) => {
@@ -80,7 +80,7 @@ export function BriefingView({ scenarios, difficulty, onStartSparring }: Briefin
       </div>
 
       {/* Main Grid: Objections on left, Questions on right */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "2rem" }}>
+      <div className="grid-split" style={{ gap: "2rem" }}>
         {/* Left Column: Predictive Objection Map */}
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -201,7 +201,7 @@ export function BriefingView({ scenarios, difficulty, onStartSparring }: Briefin
                     onClick={() => copyToClipboard(q.question, i)}
                     style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem" }}
                   >
-                    {copiedQuestionIdx === i ? "✓ Copied" : "📋 Copy"}
+                    {copyState?.idx === i ? (copyState.ok ? "✓ Copied" : "Copy blocked by browser") : "📋 Copy"}
                   </button>
                 </div>
 

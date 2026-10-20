@@ -5,7 +5,9 @@ import {
   createSpeechRecognizer,
   speakPersonaReply,
   stopSpeaking,
+  type SpeechRecognizerInstance,
 } from "@/lib/audio/speech";
+import { describeApiError, readJson } from "@/lib/apiErrors";
 
 interface SparringArenaProps {
   sessionId: string;
@@ -13,7 +15,37 @@ interface SparringArenaProps {
   difficulty: Difficulty;
   maxTurns: number;
   initialTurns?: Turn[];
+  isEvaluating: boolean;
   onEndSimulation: () => void;
+}
+
+interface ChatEvent {
+  event: "token" | "stance" | "done" | "error";
+  token?: string;
+  stance?: Stance | null;
+  unavailable?: boolean;
+  reasoning?: string;
+  turn_number?: number;
+  user_turn_number?: number;
+  code?: string;
+  error?: string;
+}
+
+/** Splits buffered SSE text into complete `data:` payloads, returning the unfinished remainder. */
+function drainSseBuffer(buffer: string): { events: ChatEvent[]; rest: string } {
+  const blocks = buffer.split("\n\n");
+  const rest = blocks.pop() ?? "";
+  const events: ChatEvent[] = [];
+  for (const block of blocks) {
+    const line = block.trim();
+    if (!line.startsWith("data: ")) continue;
+    try {
+      events.push(JSON.parse(line.slice(6)) as ChatEvent);
+    } catch {
+      console.warn("Dropped malformed SSE event:", line.slice(0, 120));
+    }
+  }
+  return { events, rest };
 }
 
 export function SparringArena({
@@ -22,48 +54,57 @@ export function SparringArena({
   difficulty,
   maxTurns,
   initialTurns = [],
+  isEvaluating,
   onEndSimulation,
 }: SparringArenaProps) {
+  const lastKnownStance = [...initialTurns].reverse().find((t) => t.role === "assistant" && t.stance)?.stance ?? null;
+
   const [turns, setTurns] = useState<Turn[]>(initialTurns);
   const [inputMessage, setInputMessage] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStreamedReply, setCurrentStreamedReply] = useState("");
-  const [currentStance, setCurrentStance] = useState<Stance>("guarded");
+  const [currentStance, setCurrentStance] = useState<Stance | null>(lastKnownStance);
   const [stanceReasoning, setStanceReasoning] = useState<string>("");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
 
   // Step 7 Voice AI states
   const [voiceSupport, setVoiceSupport] = useState({ hasSpeechRecognition: false, hasSpeechSynthesis: false });
   const [isListening, setIsListening] = useState(false);
   const [isVoiceOutputEnabled, setIsVoiceOutputEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const recognizerRef = useRef<{ stop: () => void; abort: () => void; start: () => void } | null>(null);
+  const recognizerRef = useRef<SpeechRecognizerInstance | null>(null);
+  const dictationBaseRef = useRef("");
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const userTurnCount = turns.filter((t) => t.role === "user").length;
   const isTurnCapReached = userTurnCount >= maxTurns;
+  const isBusy = isStreaming || isEvaluating;
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // Keep the thread pinned to the latest message without scrolling the whole page
   useEffect(() => {
-    scrollToBottom();
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [turns, currentStreamedReply]);
 
-  // Detect voice support on mount
+  // Detect voice support on mount; stop audio, dictation and any in-flight stream on unmount
   useEffect(() => {
-    const support = detectVoiceSupport();
-    setVoiceSupport(support);
+    setVoiceSupport(detectVoiceSupport());
     return () => {
       stopSpeaking();
-      if (recognizerRef.current) {
-        recognizerRef.current.abort();
-      }
+      recognizerRef.current?.abort();
+      abortRef.current?.abort();
     };
   }, []);
+
+  const stopListening = () => {
+    recognizerRef.current?.stop();
+    recognizerRef.current = null;
+    setIsListening(false);
+  };
 
   const toggleListening = () => {
     if (!voiceSupport.hasSpeechRecognition) {
@@ -72,36 +113,40 @@ export function SparringArena({
     }
 
     if (isListening) {
-      recognizerRef.current?.stop();
-      setIsListening(false);
-    } else {
-      stopSpeaking();
-      setIsSpeaking(false);
+      stopListening();
+      return;
+    }
 
-      const recognizer = createSpeechRecognizer({
-        onTranscript: (text, isFinal) => {
-          setInputMessage((prev) => (prev ? `${prev.trim()} ${text}` : text));
-          if (isFinal) {
-            setIsListening(false);
-          }
-        },
-        onError: (err) => {
-          console.warn("Speech recognition error:", err);
-          setIsListening(false);
-        },
-        onEnd: () => {
-          setIsListening(false);
-        },
-      });
+    stopSpeaking();
+    setIsSpeaking(false);
+    recognizerRef.current?.abort();
 
-      if (recognizer) {
-        recognizerRef.current = recognizer;
-        try {
-          recognizer.start();
-          setIsListening(true);
-        } catch {
-          setIsListening(false);
+    // Dictation replaces only what was said in this listening session, so interim results never duplicate
+    dictationBaseRef.current = inputMessage.trim();
+    const recognizer = createSpeechRecognizer({
+      onTranscript: (text) => {
+        const base = dictationBaseRef.current;
+        setInputMessage(base ? `${base} ${text}` : text);
+      },
+      onError: (err) => {
+        if (err !== "no-speech" && err !== "aborted") {
+          setErrorBanner(`Microphone error: ${err}. You can keep typing instead.`);
         }
+        setIsListening(false);
+      },
+      onEnd: () => {
+        recognizerRef.current = null;
+        setIsListening(false);
+      },
+    });
+
+    if (recognizer) {
+      recognizerRef.current = recognizer;
+      try {
+        recognizer.start();
+        setIsListening(true);
+      } catch {
+        setIsListening(false);
       }
     }
   };
@@ -114,111 +159,130 @@ export function SparringArena({
     setIsVoiceOutputEnabled((prev) => !prev);
   };
 
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputMessage.trim() || isStreaming || isTurnCapReached) return;
+  const sendMessage = async (messageText: string) => {
+    if (!messageText || isBusy || isTurnCapReached) return;
 
-    const messageText = inputMessage.trim();
+    if (isListening) stopListening();
     setInputMessage("");
     setErrorBanner(null);
+    setFailedMessage(null);
     setIsStreaming(true);
     setCurrentStreamedReply("");
 
-    // Optimistically add user turn
-    const userTurnNumber = turns.length + 1;
-    const optimisticUserTurn: Turn = {
-      id: `temp_user_${Date.now()}`,
-      session_id: sessionId,
-      turn_number: userTurnNumber,
-      role: "user",
-      content: messageText,
-      created_at: new Date().toISOString(),
+    const optimisticId = `temp_user_${Date.now()}`;
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        session_id: sessionId,
+        turn_number: (prev.at(-1)?.turn_number ?? 0) + 1,
+        role: "user",
+        content: messageText,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    // The server rolls back an unanswered user turn, so the client does the same and offers a retry
+    const failWith = (message: string, retryable: boolean) => {
+      setTurns((prev) => prev.filter((t) => t.id !== optimisticId));
+      setCurrentStreamedReply("");
+      setErrorBanner(message);
+      if (retryable) {
+        setFailedMessage(messageText);
+        setInputMessage(messageText);
+      }
     };
 
-    setTurns((prev) => [...prev, optimisticUserTurn]);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: messageText }),
+        signal: controller.signal,
       });
 
-      if (!res.ok) {
-        const errorJson = await res.json().catch(() => ({}));
-        if (errorJson.code === "TURN_CAP") {
-          setErrorBanner("Maximum turn cap reached. Please end simulation to generate your evaluation report.");
-        } else {
-          setErrorBanner(errorJson.message || "Failed to communicate with counterpart");
-        }
-        setIsStreaming(false);
+      if (!res.ok || !res.body) {
+        const err = describeApiError(await readJson(res), "Failed to reach the counterpart.");
+        failWith(err.message, err.retryable);
         return;
-      }
-
-      if (!res.body) {
-        throw new Error("No response body received");
       }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let accumulatedReply = "";
-      let finalStance: Stance = "skeptical";
+      let buffer = "";
+      let reply = "";
+      let stance: Stance | null = null;
+      let finished = false;
 
-      while (true) {
+      while (!finished) {
         const { done, value } = await reader.read();
         if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const drained = drainSseBuffer(buffer);
+        buffer = drained.rest;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-
-          try {
-            const parsed = JSON.parse(trimmed.slice(6));
-
-            if (parsed.event === "token" && parsed.token) {
-              accumulatedReply += parsed.token;
-              setCurrentStreamedReply(accumulatedReply);
-            } else if (parsed.event === "stance" && parsed.stance) {
-              finalStance = parsed.stance;
-              setCurrentStance(parsed.stance);
-              if (parsed.reasoning) {
-                setStanceReasoning(parsed.reasoning);
-              }
-            } else if (parsed.event === "done") {
-              const assistantTurn: Turn = {
-                id: `turn_a_${Date.now()}`,
-                session_id: sessionId,
-                turn_number: userTurnNumber + 1,
-                role: "assistant",
-                content: accumulatedReply,
-                stance: finalStance,
-                created_at: new Date().toISOString(),
-              };
-              setTurns((prev) => [...prev, assistantTurn]);
-              setCurrentStreamedReply("");
-
-              // Play voice audio if enabled
-              if (isVoiceOutputEnabled && accumulatedReply) {
-                setIsSpeaking(true);
-                speakPersonaReply(accumulatedReply, () => setIsSpeaking(false));
-              }
-            } else if (parsed.event === "error") {
-              setErrorBanner(parsed.error || "Simulation error");
+        for (const evt of drained.events) {
+          if (evt.event === "token" && evt.token) {
+            reply += evt.token;
+            setCurrentStreamedReply(reply);
+          } else if (evt.event === "stance") {
+            stance = evt.stance ?? null;
+            if (stance) {
+              setCurrentStance(stance);
+              setStanceReasoning(evt.reasoning || "");
+            } else {
+              setStanceReasoning("Stance reading unavailable for this turn");
             }
-          } catch {
-            // ignore non-json SSE line
+          } else if (evt.event === "done") {
+            finished = true;
+            const userTurnNumber = evt.user_turn_number;
+            setTurns((prev) => [
+              ...prev.map((t) =>
+                t.id === optimisticId && userTurnNumber ? { ...t, id: `user_${userTurnNumber}`, turn_number: userTurnNumber } : t
+              ),
+              {
+                id: `assistant_${evt.turn_number}`,
+                session_id: sessionId,
+                turn_number: evt.turn_number ?? 0,
+                role: "assistant",
+                content: reply,
+                stance,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+            setCurrentStreamedReply("");
+
+            if (isVoiceOutputEnabled && voiceSupport.hasSpeechSynthesis && reply) {
+              setIsSpeaking(true);
+              speakPersonaReply(reply, () => setIsSpeaking(false));
+            }
+          } else if (evt.event === "error") {
+            finished = true;
+            const err = describeApiError({ code: evt.code, message: evt.error }, "The simulation hit an error.");
+            failWith(err.message, err.retryable);
           }
         }
       }
+
+      if (!finished) {
+        failWith("The connection closed before the reply finished. Reload to see what was saved, or retry.", true);
+      }
     } catch (err: unknown) {
-      setErrorBanner(err instanceof Error ? err.message : "Error streaming response");
+      if (controller.signal.aborted) return;
+      failWith(err instanceof Error ? `Connection error: ${err.message}` : "Connection error", true);
     } finally {
+      abortRef.current = null;
       setIsStreaming(false);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
+  };
+
+  const handleSendMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    sendMessage(inputMessage.trim());
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -246,7 +310,9 @@ export function SparringArena({
     }
   };
 
-  const currentStanceMeta = getStanceMeta(currentStance);
+  const currentStanceMeta = currentStance
+    ? getStanceMeta(currentStance)
+    : { label: "No reading yet", color: "var(--text-secondary)", icon: "…", bg: "rgba(148, 163, 184, 0.1)" };
 
   return (
     <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
@@ -299,6 +365,7 @@ export function SparringArena({
             border: `1px solid ${currentStanceMeta.color}`,
           }}
           title={stanceReasoning || "Current persona stance"}
+          aria-live="polite"
         >
           <span style={{ fontSize: "1.1rem" }}>{currentStanceMeta.icon}</span>
           <div>
@@ -309,7 +376,7 @@ export function SparringArena({
               {currentStanceMeta.label}
               {stanceReasoning && (
                 <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "var(--text-secondary)", marginLeft: "0.4rem" }}>
-                  • {stanceReasoning.slice(0, 45)}...
+                  • {stanceReasoning.length > 60 ? `${stanceReasoning.slice(0, 60)}…` : stanceReasoning}
                 </span>
               )}
             </div>
@@ -318,6 +385,7 @@ export function SparringArena({
 
         {/* Voice AI Audio Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          {voiceSupport.hasSpeechSynthesis && (
           <button
             type="button"
             className="btn btn-secondary"
@@ -328,6 +396,7 @@ export function SparringArena({
           >
             {isVoiceOutputEnabled ? "🔊 Voice: ON" : "🔇 Voice: MUTED"}
           </button>
+          )}
 
           {isSpeaking && (
             <button
@@ -347,7 +416,7 @@ export function SparringArena({
         {/* Turn Cap Meter */}
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase" }}>
-            Turn Limit ({difficulty})
+            Turns · {difficulty} mode
           </div>
           <div style={{ fontSize: "1.05rem", fontWeight: 700 }}>
             {userTurnCount} / {maxTurns} User Turns
@@ -358,14 +427,17 @@ export function SparringArena({
           className="btn btn-danger"
           id="btn-end-simulation"
           onClick={onEndSimulation}
+          disabled={isBusy || userTurnCount < 2}
+          title={userTurnCount < 2 ? "Reply at least twice before ending" : undefined}
           style={{ padding: "0.6rem 1.25rem", fontSize: "0.85rem" }}
         >
-          End & Evaluate Session 🏁
+          {isEvaluating ? "Evaluating…" : "End & Evaluate Session 🏁"}
         </button>
       </div>
 
       {errorBanner && (
         <div
+          role="alert"
           style={{
             background: "rgba(244, 63, 94, 0.15)",
             border: "1px solid var(--accent-rose)",
@@ -374,24 +446,54 @@ export function SparringArena({
             borderRadius: "var(--radius-md)",
             marginBottom: "1rem",
             fontSize: "0.9rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "1rem",
+            flexWrap: "wrap",
           }}
         >
-          ⚠️ {errorBanner}
+          <span>⚠️ {errorBanner}</span>
+          <span style={{ display: "flex", gap: "0.5rem" }}>
+            {failedMessage && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                id="btn-retry-message"
+                disabled={isBusy}
+                onClick={() => sendMessage(failedMessage)}
+                style={{ fontSize: "0.8rem", padding: "0.35rem 0.8rem" }}
+              >
+                ↻ Retry message
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              aria-label="Dismiss error"
+              onClick={() => {
+                setErrorBanner(null);
+                setFailedMessage(null);
+              }}
+              style={{ fontSize: "0.8rem", padding: "0.35rem 0.6rem" }}
+            >
+              ✕
+            </button>
+          </span>
         </div>
       )}
 
       {/* Main Conversation Thread */}
       <div
-        className="glass-card"
+        className="glass-card sparring-thread"
         style={{
-          height: "550px",
           display: "flex",
           flexDirection: "column",
           padding: "1.5rem",
           marginBottom: "1.5rem",
         }}
       >
-        <div style={{ flex: 1, overflowY: "auto", paddingRight: "0.5rem" }}>
+        <div ref={threadRef} aria-live="polite" style={{ flex: 1, overflowY: "auto", paddingRight: "0.5rem" }}>
           {turns.length === 0 && !currentStreamedReply && (
             <div
               style={{
@@ -425,7 +527,7 @@ export function SparringArena({
               >
                 <div
                   style={{
-                    maxWidth: "75%",
+                    maxWidth: "min(75%, 640px)",
                     padding: "1rem 1.25rem",
                     borderRadius: "var(--radius-lg)",
                     background: isUser ? "var(--bg-elevated)" : "rgba(18, 24, 38, 0.95)",
@@ -477,7 +579,7 @@ export function SparringArena({
             <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "1.25rem" }}>
               <div
                 style={{
-                  maxWidth: "75%",
+                  maxWidth: "min(75%, 640px)",
                   padding: "1rem 1.25rem",
                   borderRadius: "var(--radius-lg)",
                   background: "rgba(18, 24, 38, 0.95)",
@@ -506,7 +608,6 @@ export function SparringArena({
             </div>
           )}
 
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Bar */}
@@ -524,8 +625,8 @@ export function SparringArena({
             >
               <strong>Turn limit reached ({maxTurns} messages).</strong> The simulation has concluded. Click below to generate your performance report.
               <div style={{ marginTop: "0.75rem" }}>
-                <button className="btn btn-primary" onClick={onEndSimulation} id="btn-turn-cap-evaluate">
-                  Generate Evaluation Report →
+                <button className="btn btn-primary" onClick={onEndSimulation} id="btn-turn-cap-evaluate" disabled={isBusy}>
+                  {isEvaluating ? "Evaluating…" : "Generate Evaluation Report →"}
                 </button>
               </div>
             </div>
@@ -546,9 +647,11 @@ export function SparringArena({
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={isStreaming}
+                disabled={isBusy}
+                aria-label="Your message"
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   resize: "none",
                   borderColor: isListening ? "var(--accent-rose)" : undefined,
                   boxShadow: isListening ? "0 0 12px rgba(244, 63, 94, 0.4)" : undefined,
@@ -562,7 +665,8 @@ export function SparringArena({
                   className={`btn ${isListening ? "btn-danger" : "btn-secondary"}`}
                   id="btn-voice-mic"
                   onClick={toggleListening}
-                  disabled={isStreaming}
+                  disabled={isBusy}
+                  aria-label={isListening ? "Stop dictation" : "Dictate with microphone"}
                   title={isListening ? "Click to stop listening" : "Click to speak via microphone"}
                   style={{ padding: "0.85rem 1rem", fontSize: "1.1rem" }}
                 >
@@ -574,12 +678,17 @@ export function SparringArena({
                 type="submit"
                 className="btn btn-primary"
                 id="btn-send-message"
-                disabled={isStreaming || !inputMessage.trim()}
+                disabled={isBusy || !inputMessage.trim()}
                 style={{ padding: "0.85rem 1.5rem" }}
               >
                 {isStreaming ? "Thinking..." : "Send →"}
               </button>
             </form>
+          )}
+          {!isTurnCapReached && userTurnCount < 2 && (
+            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+              Reply at least {2 - userTurnCount} more time{2 - userTurnCount === 1 ? "" : "s"} to unlock End &amp; Evaluate.
+            </div>
           )}
         </div>
       </div>

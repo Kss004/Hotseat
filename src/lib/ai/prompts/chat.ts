@@ -3,7 +3,7 @@ import { z } from "zod";
 
 type Objection = z.infer<typeof objectionSchema>;
 
-export const CHAT_PROMPT_VERSION = "v1.0";
+export const CHAT_PROMPT_VERSION = "v1.1";
 
 export function getChatSystemPrompt(params: {
   persona: PersonaData;
@@ -57,5 +57,6 @@ CRITICAL BEHAVIORAL GUARDRAILS:
 4. Keep each reply concise: at most 100 to 120 words.
 5. Present only ONE distinct question, challenge, or pushback at a time. Do not overwhelm with multiple disparate questions.
 6. If the user uses vague buzzwords or dodges your question, press harder on that exact point.
-7. Concede or show interest ONLY if the user provides concrete evidence, architecture, risk mitigations, or metrics.`;
+7. Concede or show interest ONLY if the user provides concrete evidence, architecture, risk mitigations, or metrics.
+8. Output only the words you would say aloud. Never start with your name, a speaker label (e.g. "${persona.name}:"), stage directions, or quotation marks.`;
 }

@@ -2,7 +2,8 @@
   "clarity_score": 8,
   "clarity_critique": "Answers were direct and avoided marketing jargon, addressing security parameters without evasion.",
   "clarity_evidence": [
-    "Our architecture isolates audit logs in customer-managed vaults"
+    "Our architecture isolates audit logs in customer-managed vaults",
+    "We are FedRAMP High authorized across every region today"
   ],
   "confidence_score": 8,
   "confidence_critique": "Maintained composure when challenged on SLA breach liabilities and stood firm on architectural guarantees.",
@@ -22,14 +23,30 @@
   "executive_summary": "Strong performance that successfully navigated a cynical, compliance-focused Managing Director by leading with technical security rather than flashy sales promises.",
   "turn_rewrites": [
     {
-      "turn_number": 2,
+      "turn_number": 1,
       "critique": "Initial pricing answer sounded defensive and didn't tie cost to risk reduction.",
-      "gold_standard": "Marcus, we price based on monitored event volume with a capped sandbox tier. Given your quarterly audit preparation cycle, our customers typically see payback within 45 days by eliminating manual evidence gathering."
+      "gold_standard": "Marcus, we price on monitored event volume with a capped sandbox tier. Given your quarterly audit preparation cycle, the case rests on [hours of manual evidence gathering per audit] removed; I'd like the pilot to measure exactly that."
     },
     {
-      "turn_number": 4,
+      "turn_number": 3,
       "critique": "Answered implementation timeline without addressing IT review governance.",
-      "gold_standard": "We know IT risk review is your gate. We provide pre-completed SIG Core questionnaires, SOC2 Type II audit packages, and a zero-data-access deployment model so your security team can clear the sandbox in days rather than months."
+      "gold_standard": "IT risk review is your gate, so we start there: we hand your team our security questionnaire responses and audit package up front, and the sandbox runs on a copy of non-production data so nothing touches live systems."
+    }
+  ],
+  "objection_playbook": [
+    {
+      "objection": "Why would I spend budget on a pilot when our current controls already pass audit?",
+      "category": "ROI/Financial",
+      "user_turn_number": 3,
+      "what_went_wrong": "The answer defended the architecture but never put a number on the cost of the status quo, so the budget question was left open.",
+      "framework_name": "Acknowledge, Quantify, Prove, Commit",
+      "framework_steps": [
+        "Acknowledge: agree that passing audit today is the baseline, not the problem.",
+        "Quantify: name the cost the persona already pays (auditor hours, evidence-gathering cycles, findings remediated).",
+        "Prove: offer the 60-day sandbox as the measurement, with a success metric he chooses.",
+        "Commit: ask for the one decision needed to start the pilot."
+      ],
+      "example_response": "You're right that you pass audit today. The question is what it costs you each cycle in [team hours on evidence gathering]. The 60-day sandbox is designed to measure that number against your current process, and if it doesn't move, you walk away. Can we agree on the metric before we leave the room?"
     }
   ],
   "cheat_sheet": {

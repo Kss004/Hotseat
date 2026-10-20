@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db";
+import { z } from "zod";
+import { getReadyDb } from "@/lib/db";
 import { getLLMRouter } from "@/lib/ai/router";
 import { getChatSystemPrompt, CHAT_PROMPT_VERSION } from "@/lib/ai/prompts/chat";
 import { getStanceSystemPrompt, getStanceUserPrompt, STANCE_PROMPT_VERSION } from "@/lib/ai/prompts/stance";
@@ -10,22 +11,29 @@ import {
   type RiskPosture,
   type TechnicalDepth,
 } from "@/types";
-import { AppError } from "@/lib/errors";
+import { AppError, toErrorResponse, type ErrorCode } from "@/lib/errors";
+
+const chatBodySchema = z.object({
+  message: z.string().trim().min(1, "Message cannot be empty").max(4000, "Message is too long"),
+});
+
+function jsonError(code: ErrorCode, message: string, status: number) {
+  return new Response(JSON.stringify({ code, message }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const sessionId = params.id;
-    const body = await req.json();
-    const userMessage = body?.message;
-
-    if (!userMessage || typeof userMessage !== "string" || userMessage.trim().length === 0) {
-      return new Response(JSON.stringify({ code: "VALIDATION", message: "Message cannot be empty" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+    const body = chatBodySchema.safeParse(await req.json().catch(() => null));
+    if (!body.success) {
+      return jsonError("VALIDATION", body.error.issues[0]?.message || "Invalid request body", 400);
     }
+    const userMessage = body.data.message;
 
-    const db = getDb();
+    const db = await getReadyDb();
 
     // 1. Fetch session & turn cap
     const sessionRes = await db.execute({
@@ -34,13 +42,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     });
 
     if (sessionRes.rows.length === 0) {
-      return new Response(JSON.stringify({ code: "NOT_FOUND", message: "Session not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonError("NOT_FOUND", "Session not found", 404);
     }
 
     const s = sessionRes.rows[0];
+    if (s.status === "ended" || s.status === "evaluated") {
+      return jsonError("SESSION_ENDED", "This simulation has ended. Start a new session to spar again.", 409);
+    }
     const meetingContext = JSON.parse(s.meeting_context as string);
     const difficulty = (s.difficulty as Difficulty) || "realistic";
     const maxTurns = Number(s.max_turns) || 10;
@@ -53,48 +61,21 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const userTurnsCount = Number(userTurnsCountRes.rows[0].count);
 
     if (userTurnsCount >= maxTurns) {
-      return new Response(
-        JSON.stringify({
-          code: "TURN_CAP",
-          message: `Maximum turn cap (${maxTurns} turns) reached for this session. Please end simulation and review analytics.`,
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+      return jsonError(
+        "TURN_CAP",
+        `Maximum turn cap (${maxTurns} turns) reached for this session. Please end simulation and review analytics.`,
+        400
       );
     }
 
-    // 3. Get next turn number
-    const maxTurnRes = await db.execute({
-      sql: `SELECT MAX(turn_number) as max_num FROM turns WHERE session_id = ?`,
-      args: [sessionId],
-    });
-    const currentMaxTurn = Number(maxTurnRes.rows[0]?.max_num || 0);
-    const userTurnNumber = currentMaxTurn + 1;
-    const userTurnId = `turn_${Date.now()}_u`;
-
-    // 4. Save user turn to database
-    await db.execute({
-      sql: `INSERT INTO turns (id, session_id, turn_number, role, content)
-            VALUES (?, ?, ?, 'user', ?)`,
-      args: [userTurnId, sessionId, userTurnNumber, userMessage.trim()],
-    });
-
-    // Update session status to roleplay_active
-    await db.execute({
-      sql: `UPDATE sessions SET status = 'roleplay_active' WHERE id = ?`,
-      args: [sessionId],
-    });
-
-    // 5. Fetch persona & scenarios
+    // 3. Fetch persona & scenarios before writing anything, so a missing persona never leaves an orphan turn
     const personaRes = await db.execute({
       sql: `SELECT name, title, company, background, risk_posture, technical_depth,
                    business_priorities, hot_buttons, conversational_style FROM personas WHERE session_id = ?`,
       args: [sessionId],
     });
     if (personaRes.rows.length === 0) {
-      return new Response(JSON.stringify({ code: "VALIDATION", message: "Persona not found" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonError("VALIDATION", "Persona not found", 400);
     }
     const p = personaRes.rows[0];
     const persona: PersonaData = {
@@ -116,7 +97,22 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     });
     const objections = scenariosRes.rows.length > 0 ? JSON.parse(scenariosRes.rows[0].objections as string) : [];
 
-    // 6. Fetch conversation history truncated to last 12 messages
+    // 4. Save user turn; the turn number is computed in the same statement to avoid a read-then-write race
+    const userTurnId = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_u`;
+    const insertedUser = await db.execute({
+      sql: `INSERT INTO turns (id, session_id, turn_number, role, content)
+            SELECT ?, ?, COALESCE(MAX(turn_number), 0) + 1, 'user', ? FROM turns WHERE session_id = ?
+            RETURNING turn_number`,
+      args: [userTurnId, sessionId, userMessage, sessionId],
+    });
+    const userTurnNumber = Number(insertedUser.rows[0].turn_number);
+
+    await db.execute({
+      sql: `UPDATE sessions SET status = 'roleplay_active' WHERE id = ?`,
+      args: [sessionId],
+    });
+
+    // 5. Conversation history truncated to last 12 messages
     const historyRes = await db.execute({
       sql: `SELECT role, content FROM turns WHERE session_id = ? ORDER BY turn_number DESC LIMIT 12`,
       args: [sessionId],
@@ -135,16 +131,26 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
     const router = getLLMRouter();
 
-    // 7. Prepare SSE response stream
+    // 6. SSE response stream
     const encoder = new TextEncoder();
+    let clientGone = false;
     const stream = new ReadableStream({
       async start(controller) {
+        // If the browser disconnects we keep generating so the reply is still persisted
+        const send = (payload: Record<string, unknown>) => {
+          if (clientGone) return;
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          } catch {
+            clientGone = true;
+          }
+        };
+
         let assistantReply = "";
         const assistantTurnNumber = userTurnNumber + 1;
-        const assistantTurnId = `turn_${Date.now()}_a`;
+        const assistantTurnId = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_a`;
 
         try {
-          // Stream plain reply text as SSE token events
           for await (const token of router.stream({
             purpose: "chat",
             system: systemPrompt,
@@ -153,83 +159,78 @@ export async function POST(req: Request, { params }: { params: { id: string } })
             sessionId,
           })) {
             assistantReply += token;
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ event: "token", token })}\n\n`)
-            );
+            send({ event: "token", token });
           }
+        } catch (streamErr: unknown) {
+          // The persona never answered, so the user's turn is rolled back and does not count against the cap
+          await db
+            .execute({ sql: `DELETE FROM turns WHERE id = ?`, args: [userTurnId] })
+            .catch((e) => console.error("Failed to roll back user turn:", e));
+          const code: ErrorCode = streamErr instanceof AppError ? streamErr.code : "LLM_UNAVAILABLE";
+          console.error(`Chat stream failed for ${sessionId}:`, streamErr);
+          send({
+            event: "error",
+            code,
+            error: "The AI providers are unavailable right now. Your message was not counted; try sending it again.",
+          });
+          try {
+            controller.close();
+          } catch {
+            // already closed by a disconnect
+          }
+          return;
+        }
 
-          // Persist full reply in database
+        try {
           await db.execute({
             sql: `INSERT INTO turns (id, session_id, turn_number, role, content)
                   VALUES (?, ?, ?, 'assistant', ?)`,
             args: [assistantTurnId, sessionId, assistantTurnNumber, assistantReply],
           });
 
-          // Second structured call: Decision D2 (classify stance)
-          let classifiedStance: Stance = "skeptical";
+          // Decision D2: second small structured call classifies the persona's stance.
+          // On failure we report the stance as unavailable instead of inventing one.
+          let classifiedStance: Stance | null = null;
           try {
             const stanceResult = await router.complete<{ stance: Stance; reasoning?: string }>({
               purpose: "stance",
               system: getStanceSystemPrompt(persona),
-              user: getStanceUserPrompt({
-                lastUserMessage: userMessage,
-                assistantReply,
-              }),
+              user: getStanceUserPrompt({ lastUserMessage: userMessage, assistantReply }),
               schema: stanceOutputSchema,
               promptVersion: STANCE_PROMPT_VERSION,
               sessionId,
             });
-
             classifiedStance = stanceResult.data.stance;
-
-            // Update assistant turn with classified stance
             await db.execute({
               sql: `UPDATE turns SET stance = ? WHERE id = ?`,
               args: [classifiedStance, assistantTurnId],
             });
-
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  event: "stance",
-                  stance: classifiedStance,
-                  reasoning: stanceResult.data.reasoning || "",
-                })}\n\n`
-              )
-            );
+            send({ event: "stance", stance: classifiedStance, reasoning: stanceResult.data.reasoning || "" });
           } catch (stanceErr) {
-            console.warn("Stance classification failed, defaulting to skeptical:", stanceErr);
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  event: "stance",
-                  stance: "skeptical",
-                  reasoning: "Classification unavailable",
-                })}\n\n`
-              )
-            );
+            console.warn("Stance classification failed:", stanceErr);
+            send({ event: "stance", stance: null, unavailable: true, reasoning: "Stance reading unavailable for this turn" });
           }
 
-          // Emit done event
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                event: "done",
-                turn_number: assistantTurnNumber,
-                stance: classifiedStance,
-                remaining_turns: maxTurns - (userTurnsCount + 1),
-              })}\n\n`
-            )
-          );
-
-          controller.close();
-        } catch (streamErr: unknown) {
-          const errMsg = streamErr instanceof Error ? streamErr.message : "Stream failure";
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ event: "error", error: errMsg })}\n\n`)
-          );
-          controller.close();
+          send({
+            event: "done",
+            turn_number: assistantTurnNumber,
+            user_turn_number: userTurnNumber,
+            stance: classifiedStance,
+            remaining_turns: maxTurns - (userTurnsCount + 1),
+          });
+        } catch (persistErr) {
+          console.error(`Chat persistence failed for ${sessionId}:`, persistErr);
+          send({ event: "error", code: "INTERNAL_ERROR", error: "The reply could not be saved. Reload to see the saved transcript." });
         }
+
+        try {
+          controller.close();
+        } catch {
+          // already closed by a disconnect
+        }
+      },
+      cancel() {
+        clientGone = true;
       },
     });
 
@@ -237,17 +238,14 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       },
     });
   } catch (err: unknown) {
-    const isCap = err instanceof AppError && err.code === "TURN_CAP";
-    return new Response(
-      JSON.stringify({
-        code: isCap ? "TURN_CAP" : "INTERNAL_ERROR",
-        message: err instanceof Error ? err.message : "Error handling chat",
-      }),
-      { status: isCap ? 400 : 500, headers: { "Content-Type": "application/json" } }
-    );
+    const errResp = toErrorResponse(err);
+    return new Response(JSON.stringify(errResp.body), {
+      status: errResp.status,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }

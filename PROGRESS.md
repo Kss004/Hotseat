@@ -1,110 +1,59 @@
 # PROGRESS.md - Project Tracking & Status
 
-Source of truth for implementation status. Steps must be strictly completed and validated in sequence.
+Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
+Last verified: 2026-10-20 (`npm test` 42/42, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
 ## Verified Working Model IDs
-- **Gemini Model (`GEMINI_MODEL`)**: Pending live smoke verification
-- **Groq Model (`GROQ_MODEL`)**: Pending live smoke verification
+- **Gemini (`GEMINI_MODEL`)**: `gemini-2.5-flash`, which passed `llm:smoke` on 2026-10-20. The free-tier key then hit 429 quota limits, and every call in the live run below failed over to Groq.
+- **Groq (`GROQ_MODEL`)**: `openai/gpt-oss-120b`, which passed `llm:smoke` on 2026-10-20. `llama-3.3-70b-versatile` returned 404 `model_not_found` for this account, so it was replaced via env only, with no code change.
 
 ---
 
-## Step Tracker
+## Step 1: Scaffold and Core Infrastructure
+- [x] Next.js App Router, TypeScript strict, vanilla CSS design system (no Tailwind)
+- [x] libSQL client; idempotent schema plus additive column migrations, auto-applied on first request (`getReadyDb`)
+- [x] Env schema; model IDs read only from env; `DATABASE_AUTH_TOKEN` for Turso
+- [x] LLM router: Gemini → Groq → local; Zod validation plus one repair retry; failover before first token only (`tests/router.test.ts`)
+- [x] `llm_calls` logging; client-safe error messages (upstream detail logged server-side only)
+- [x] Replay mode (`LLM_MODE=replay`) from `fixtures/llm/`, used by route-level tests
+- [x] `npm run llm:smoke` against live keys (both providers passed individually; see model IDs above)
 
-### [x] Step 1: Scaffold and Core Infrastructure
-- [x] Initialize Next.js project with TypeScript strict mode
-- [x] Configure vanilla CSS dark executive design system & tokens
-- [x] Setup `@libsql/client` and idempotent SQLite migration script (`file:./data/app.db`)
-- [x] Implement environment variable schema & validation
-- [x] Implement seeded MD fixture: Marcus Vance (`fixtures/marcus-vance.json`)
-- [x] Implement LLM router (`complete` & `stream`) with Gemini primary, Groq fallback, local dev option
-- [x] Implement Zod schema validation & 1-shot repair retry for structured calls
-- [x] Implement `llm_calls` database logging and typed error hierarchy
-- [x] Implement replay mode (`LLM_MODE=replay`) from `fixtures/llm/`
-- [x] Implement `llm:smoke` CLI script to verify Gemini and Groq live connectivity & model IDs
-- [x] **Validation Criteria**:
-  - [x] `llm:smoke` script operational (`npm run llm:smoke`)
-  - [x] Router tests cover 429 failover, all-providers-fail error, repair retry success, invalid JSON twice (`npm test` passes 6/6)
-  - [x] DB migration runs twice cleanly without errors (`npm run db:migrate`)
-  - [x] Typecheck and unit tests green (`npm run typecheck` & `npm test`)
+## Step 2: Ingestion and Editable Persona Card
+- [x] Paste-first form (80-char minimum); retrying after a persona failure reuses the created session
+- [x] LinkedIn best-effort fetch: https `*.linkedin.com` only, at most 2 redirects to LinkedIn hosts, 5s timeout, sign-in wall and 999 detection (`tests/scraper.test.ts`)
+- [x] Persona generation with uncertain fields; regenerate returns the stored id (`tests/persona.test.ts` #2)
+- [x] PATCH edits persist through a reload with `edited_by_user = 1`; invalid edits rejected (`tests/persona.test.ts` #3, #4)
 
----
+## Step 3: Scenario Map and Strategic Questions
+- [x] Single call: 4–6 categorized objections plus 5–7 phased questions (`tests/scenarios.test.ts`, `tests/golden-gate.test.ts` Gate 2)
 
-### [x] Step 2: Ingestion and Editable Persona Card
-- [x] Paste-first input form (min 80 chars profile, meeting context fields)
-- [x] LinkedIn best-effort route (`POST /api/ingest/linkedin`) with hostname allowlist (`linkedin.com`), 5s timeout, OpenGraph/meta tag extraction only
-- [x] Persona generator route (`POST /api/sessions/[id]/persona`) with `uncertain_fields` detection
-- [x] Editable Persona Card UI with visual highlighting of uncertain fields
-- [x] Persona update persistence (`PATCH /api/sessions/[id]/persona` setting `edited_by_user = 1`)
-- [x] **Validation Criteria**:
-  - [x] Zod schema tests pass (`tests/persona.test.ts`)
-  - [x] SSRF test blocks non-LinkedIn hosts & private IPs (`tests/scraper.test.ts`)
-  - [x] Fixture produces `risk_averse` persona on live/replay run
-  - [x] Edits survive a reload and persist to SQLite with `edited_by_user = 1`
+## Step 4: Streaming Sparring Chat and Stance Meter
+- [x] SSE route: tokens → persist → stance call → `stance` → `done` (`tests/chat.test.ts` #3)
+- [x] Turn cap returns `TURN_CAP` without writing a turn (`tests/chat.test.ts` #4)
+- [x] Ended sessions reject messages with `SESSION_ENDED` (`tests/chat.test.ts` #5)
+- [x] Provider failure emits `LLM_UNAVAILABLE` and rolls back the user turn (`tests/chat.test.ts` #7)
+- [x] Stance failure reported as unavailable (`stance: null`), never guessed
+- [x] Client: buffered SSE parser, abort on unmount, retry with text restored, dictation without duplicated words
 
----
+## Step 5: Evaluator, Rewrites, Objection Playbook, Cheat Sheet
+- [x] `INSUFFICIENT_TURNS` below 2 user turns (`tests/evaluate.test.ts` #7)
+- [x] Quotes must be verbatim within a single user turn; invalid quotes dropped, never backfilled (`tests/evaluate.test.ts` #1, #2, #4, #5, #8)
+- [x] Rewrite and playbook turn numbers validated in the per-request schema, so a bad number gets the repair retry (`tests/evaluate.test.ts` #3)
+- [x] `user_said` from the DB; overall score is the mean computed in code (`tests/evaluate.test.ts` #4, #6)
+- [x] Objection Playbook (framework coaching for the hardest pushback) in schema, prompt, DB and report UI
+- [x] Report: Markdown copy and download, print of the cheat sheet only
 
-### [x] Step 3: Scenario Map and Strategic Questions
-- [x] Single-call combined generator route (`POST /api/sessions/[id]/scenarios`)
-- [x] Generate 4–6 objections (Risk/Compliance/Security, ROI/Financial, Implementation, Status Quo)
-- [x] Generate 5–7 phased strategic questions (rapport, challenge, risk, decision criteria) with rationale and listening cues
-- [x] Interactive Briefing view with 1-click copy
-- [x] **Validation Criteria**:
-  - [x] Schema validation tests pass (`tests/scenarios.test.ts`)
-  - [x] Benchmark run includes Risk/Security objection and ROI objection
-  - [x] 5–7 questions returned cleanly
+## Step 6: GATE - Golden Path
+- [x] Route-level golden path on the Marcus Vance fixture: persona, scenarios, two chat turns, evaluation, reload restore, honest failure with no providers (`tests/golden-gate.test.ts` Gates 1–6)
+- [x] `npm run build` passes
+- [x] Manual live run of the demo script in the browser with real keys (2026-10-20):
+  - Persona: risk_averse, high technical depth, with inferred-field highlighting.
+  - Scenarios: 5 objections across all 4 categories, and 6 questions.
+  - Chat: 2 turns, stances streamed live.
+  - Evaluation: overall 5.8; technical answer credited and the budget dodge penalised; playbook "Acknowledge, Quantify, Prove, Commit"; all quotes verified.
+  - Providers: all 14 LLM calls failed over from Gemini (429) to Groq, as logged in `llm_calls`.
 
----
-
-### [x] Step 4: Streaming Sparring Chat and Stance Meter
-- [x] Streaming SSE route (`POST /api/sessions/[id]/chat`)
-- [x] System prompt with persona, meeting context, private objections, difficulty modifier
-- [x] Sparring behavior guardrails (stay in character, max ~120 words, no AI references, no coaching)
-- [x] Difficulty selector: warmup, realistic, hostile
-- [x] Turn cap enforcement (max 10 user messages; returns `TURN_CAP` error code; chat history truncated to last 12 messages)
-- [x] Stance classifier call on stream end emitting SSE `stance` event (`skeptical | guarded | neutral | intrigued | convinced | impatient`)
-- [x] Close simulation route (`POST /api/sessions/[id]/end`)
-- [x] **Validation Criteria**:
-  - [x] SSE stream unit tests pass
-  - [x] Failover occurs strictly before first token (`tests/router.test.ts`)
-  - [x] Turn cap enforced (`tests/chat.test.ts`)
-  - [x] Stance always in enum (`tests/chat.test.ts`)
-  - [x] In-character guardrail tests pass (`tests/chat.test.ts`)
-
----
-
-### [x] Step 5: Evaluator, Rewrites, Cheat Sheet
-- [x] Evaluator route (`POST /api/sessions/[id]/evaluate`) with guard requiring $\ge$ 2 user turns (`INSUFFICIENT_TURNS`)
-- [x] Structured evaluation across 4 PRD dimensions (1–10 anchored scale with evidence quotes)
-- [x] Code post-validation: verify all evidence quotes are verbatim substrings of user turns
-- [x] Code post-validation: turn rewrites reference real user turns; `user_said` populated from DB
-- [x] Compute `overall_score` strictly in code
-- [x] Generate Executive Summary & 5-minute Cheat Sheet
-- [x] Report UI with Markdown export and `@media print` cheat sheet
-- [x] **Validation Criteria**:
-  - [x] Quote-substring validator drops fabricated quotes and preserves real user substrings (`tests/evaluate.test.ts`)
-  - [x] Rewrites match real user turns with DB-sourced `user_said`
-  - [x] Fewer than 2 turns returns `INSUFFICIENT_TURNS` (`tests/evaluate.test.ts`)
-
----
-
-### [x] Step 6: GATE - Golden Path & Demo Script
-- [x] Automated test suite on the Marcus Vance fixture (`tests/golden-gate.test.ts`)
-- [x] Verify all 7 Gate Assertions:
-  - [x] Persona: `risk_posture = risk_averse`, priorities/hot buttons mention security/compliance/risk
-  - [x] Scenarios: $\ge$ 1 Risk objection, $\ge$ 1 ROI objection, 4–6 objections, 5–7 questions
-  - [x] Chat: persona replies on every turn, stance in enum, turn cap enforced, no mid-stream provider switch
-  - [x] Evaluation: 4 integer scores in 1–10, all quotes verified substrings, $\ge$ 2 rewrites on real user turns, overall score equals mean of 4, cheat sheet complete
-  - [x] Failure path: forced provider failure renders `LLM_UNAVAILABLE` error state honestly with no mock disguise
-  - [x] Persistence: reload restores persona, scenarios, transcript, and report from SQLite
-  - [x] Production build passes cleanly (`next build`)
-- [x] Write `README.md` with installation, setup, and step-by-step PRD demo script
-
----
-
-### [x] Step 7: Stretch - Voice AI (STT & TTS)
-- [x] Feature detection for Web Speech API (`src/lib/audio/speech.ts`)
-- [x] Voice input (Microphone STT) streaming into chat input (`SparringArena.tsx`)
-- [x] Speech synthesis (TTS) for persona replies with pitch/rate/voice tailored to persona
-- [x] Graceful fallback to text-only if unsupported, with mute/unmute and stop controls
+## Step 7: Stretch - Voice
+- [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback

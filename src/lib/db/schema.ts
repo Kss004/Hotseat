@@ -1,3 +1,6 @@
+// Base schema. Inlined as a TS string (not read from disk) so it ships with any build output.
+// Every statement must be idempotent; column additions go in COLUMN_MIGRATIONS below.
+export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -78,3 +81,13 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   error_code TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+`;
+
+// Additive column migrations for tables that already exist. Applied only when the column is missing.
+export const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  {
+    table: "evaluations",
+    column: "objection_playbook",
+    ddl: "ALTER TABLE evaluations ADD COLUMN objection_playbook TEXT NOT NULL DEFAULT '[]'",
+  },
+];

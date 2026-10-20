@@ -11,8 +11,8 @@
 - **Styling**: Vanilla CSS design system with CSS custom properties (dark executive theme) or CSS Modules. **No Tailwind**.
 - **Database**: libSQL (`@libsql/client`) with local default `DATABASE_URL=file:./data/app.db`. All migrations must be idempotent.
 - **LLM Router**:
-  - Primary: Gemini (`GEMINI_MODEL`, e.g., `gemini-2.5-flash` or live-verified model ID).
-  - Fallback: Groq (`GROQ_MODEL`, e.g., `llama-3.3-70b-versatile`).
+  - Primary: OpenCode Go (`OPENCODE_MODEL`, e.g., `deepseek-v4.1-flash`; OpenAI-compatible, `OPENCODE_BASE_URL`).
+  - Fallbacks, in order: Gemini (`GEMINI_MODEL`, e.g., `gemini-2.5-flash`), then Groq (`GROQ_MODEL`, e.g., `openai/gpt-oss-120b`).
   - Dev-time local: `LOCAL_LLM_URL` (optional).
   - Model IDs must never be hardcoded; verify via environment variables.
 - **Streaming & Stance (Decision D2)**:

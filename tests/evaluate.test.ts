@@ -1,62 +1,127 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { getDb, runMigrations } from "@/lib/db";
-import { evaluationOutputSchema } from "@/types";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { getReadyDb } from "@/lib/db";
+import { buildEvaluationSchema, evaluationOutputSchema, type EvaluationOutput, type Turn } from "@/types";
 import { filterValidQuotes } from "@/lib/quotes";
+import { postValidateEvaluation } from "@/lib/evaluation";
+import { POST as evaluatePOST } from "@/app/api/sessions/[id]/evaluate/route";
+import { GET as evaluationGET } from "@/app/api/sessions/[id]/evaluation/route";
 import fixtureEvaluation from "../fixtures/llm/evaluate.json";
+import {
+  TRANSCRIPT, createSession, jsonRequest, params, resetDb,
+  seedPersonaAndScenarios, seedTranscript, useLiveMode, useReplayMode,
+} from "./helpers";
+
+const FABRICATED = "We are FedRAMP High authorized across every region today";
+
+const userTurns: Turn[] = TRANSCRIPT.map((t, i) => ({
+  id: `t${i + 1}`,
+  session_id: "s",
+  turn_number: i + 1,
+  role: t.role,
+  content: t.content,
+  created_at: "",
+})).filter((t) => t.role === "user");
 
 describe("Step 5: Evaluator, Rewrites & Post-Validation", () => {
-  beforeAll(async () => {
-    await runMigrations();
+  describe("quote validator", () => {
+    it("1. Keeps verbatim quotes (case, whitespace and smart punctuation normalized) and drops invented ones", () => {
+      const texts = ["We don’t   store keys.  Ever.", "Pilot runs 60 days."];
+      expect(filterValidQuotes(["we don't store keys", "“Pilot runs 60 days…”"], texts)).toEqual([
+        "we don't store keys",
+        "“Pilot runs 60 days…”",
+      ]);
+      expect(filterValidQuotes(["We store nothing at all"], texts)).toEqual([]);
+    });
+
+    it("2. Rejects a quote stitched across two separate user turns", () => {
+      const texts = ["Our logs are immutable.", "Pricing is per seat."];
+      expect(filterValidQuotes(["immutable. Pricing is"], texts)).toEqual([]);
+    });
   });
 
-  it("1. Validates evaluation schema structure and score boundaries [1-10]", () => {
-    const parsed = evaluationOutputSchema.safeParse(fixtureEvaluation);
-    expect(parsed.success).toBe(true);
-
-    if (parsed.success) {
-      const data = parsed.data;
-      expect(data.clarity_score).toBeGreaterThanOrEqual(1);
-      expect(data.clarity_score).toBeLessThanOrEqual(10);
-      expect(data.confidence_score).toBeGreaterThanOrEqual(1);
-      expect(data.confidence_score).toBeLessThanOrEqual(10);
-      expect(data.structure_score).toBeGreaterThanOrEqual(1);
-      expect(data.structure_score).toBeLessThanOrEqual(10);
-      expect(data.relevance_score).toBeGreaterThanOrEqual(1);
-      expect(data.relevance_score).toBeLessThanOrEqual(10);
-
-      // Verify cheat sheet has all 3 lists populated
-      expect(data.cheat_sheet.top_talking_points.length).toBeGreaterThan(0);
-      expect(data.cheat_sheet.defense_shields.length).toBeGreaterThan(0);
-      expect(data.cheat_sheet.killer_questions.length).toBeGreaterThan(0);
-    }
+  describe("schema refinement", () => {
+    it("3. Rejects rewrites that point at an assistant turn, with an error naming the valid user turns", () => {
+      const bad = {
+        ...fixtureEvaluation,
+        turn_rewrites: fixtureEvaluation.turn_rewrites.map((rw, i) => ({ ...rw, turn_number: i === 0 ? 2 : 3 })),
+      };
+      const parsed = buildEvaluationSchema([1, 3]).safeParse(bad);
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.message).toContain("Valid user turn numbers: 1, 3");
+      expect(buildEvaluationSchema([1, 3]).safeParse(fixtureEvaluation).success).toBe(true);
+    });
   });
 
-  it("2. Verbatim Quote Post-Validation: drops fabricated quotes and preserves real user substrings", () => {
-    const realUserTurns = [
-      "Our architecture isolates audit logs in customer-managed vaults with zero third-party access.",
-      "We back our tamper-evident logs with contractual financial SLA credits.",
-    ];
+  describe("postValidateEvaluation", () => {
+    const data = evaluationOutputSchema.parse(fixtureEvaluation) as EvaluationOutput;
 
-    const candidateQuotes = [
-      "isolates audit logs in customer-managed vaults", // valid substring
-      "We back our tamper-evident logs", // valid substring
-      "This is a fabricated quote never spoken by the user", // invalid quote
-    ];
+    it("4. Drops fabricated evidence without backfilling, and sources user_said from the DB turn", () => {
+      const { evaluation, droppedQuotes } = postValidateEvaluation(data, userTurns);
+      expect(droppedQuotes).toBe(1);
+      expect(evaluation.clarity_evidence).not.toContain(FABRICATED);
+      for (const quote of [
+        ...evaluation.clarity_evidence,
+        ...evaluation.confidence_evidence,
+        ...evaluation.structure_evidence,
+        ...evaluation.relevance_evidence,
+      ]) {
+        expect(userTurns.some((t) => t.content.toLowerCase().includes(quote.toLowerCase()))).toBe(true);
+      }
+      expect(evaluation.turn_rewrites.map((r) => r.user_said)).toEqual([userTurns[0].content, userTurns[1].content]);
+      // turn_number 3 is the user's 2nd message, so it is labelled #2
+      expect(evaluation.turn_rewrites.map((r) => r.user_turn_index)).toEqual([1, 2]);
+      expect(evaluation.objection_playbook[0].user_turn_index).toBe(2);
+      expect(evaluation.objection_playbook[0].user_said).toBe(userTurns[1].content);
+    });
 
-    const validQuotes = filterValidQuotes(candidateQuotes, realUserTurns);
+    it("5. Leaves a dimension's evidence empty when every quote is invalid", () => {
+      const allFake = { ...data, structure_evidence: ["nothing like this was said"] };
+      expect(postValidateEvaluation(allFake, userTurns).evaluation.structure_evidence).toEqual([]);
+    });
 
-    expect(validQuotes).toContain("isolates audit logs in customer-managed vaults");
-    expect(validQuotes).toContain("We back our tamper-evident logs");
-    expect(validQuotes).not.toContain("This is a fabricated quote never spoken by the user");
+    it("6. Computes overall_score in code as the mean of the four dimensions", () => {
+      const scored = { ...data, clarity_score: 9, confidence_score: 6, structure_score: 7, relevance_score: 5 };
+      expect(postValidateEvaluation(scored, userTurns).evaluation.overall_score).toBe(6.8);
+    });
   });
 
-  it("3. Overall score computation: strictly equals mean of 4 scores", () => {
-    const clarity = 8;
-    const confidence = 8;
-    const structure = 7;
-    const relevance = 9;
+  describe("POST /api/sessions/[id]/evaluate (real route, replay LLM)", () => {
+    beforeAll(() => useReplayMode());
+    afterAll(() => useLiveMode());
+    beforeEach(() => resetDb());
 
-    const mean = Number(((clarity + confidence + structure + relevance) / 4).toFixed(1));
-    expect(mean).toBe(8.0);
+    it("7. Returns INSUFFICIENT_TURNS with fewer than 2 user turns", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+      await seedTranscript(sessionId, TRANSCRIPT.slice(0, 2));
+
+      const res = await evaluatePOST(jsonRequest({}), params(sessionId));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("INSUFFICIENT_TURNS");
+    });
+
+    it("8. Persists a post-validated evaluation that the GET route returns identically", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+      await seedTranscript(sessionId);
+
+      const res = await evaluatePOST(jsonRequest({}), params(sessionId));
+      expect(res.status).toBe(200);
+      const { evaluation } = await res.json();
+
+      expect(evaluation.clarity_evidence).not.toContain(FABRICATED);
+      expect(evaluation.overall_score).toBe(
+        Number(((evaluation.clarity_score + evaluation.confidence_score + evaluation.structure_score + evaluation.relevance_score) / 4).toFixed(1))
+      );
+      expect(evaluation.turn_rewrites).toHaveLength(2);
+      expect(evaluation.objection_playbook[0].framework_steps.length).toBeGreaterThanOrEqual(3);
+
+      const stored = await (await evaluationGET(jsonRequest({}, "GET"), params(sessionId))).json();
+      expect(stored.evaluation).toEqual(evaluation);
+
+      const db = await getReadyDb();
+      const session = await db.execute({ sql: `SELECT status FROM sessions WHERE id = ?`, args: [sessionId] });
+      expect(session.rows[0].status).toBe("evaluated");
+    });
   });
 });

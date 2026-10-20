@@ -10,64 +10,8 @@ interface AnalyticsReportProps {
 }
 
 export function AnalyticsReport({ evaluation, persona, onNewSession }: AnalyticsReportProps) {
-  const [copiedMarkdown, setCopiedMarkdown] = useState(false);
-
-  const getScoreColor = (score: number) => {
-    if (score >= 8) return "var(--accent-emerald)";
-    if (score >= 6) return "var(--accent-gold)";
-    return "var(--accent-rose)";
-  };
-
-  const handleCopyMarkdown = async () => {
-    const md = `# Executive Meeting Preparation Report: ${persona.name} (${persona.company})
-**Overall Score:** ${evaluation.overall_score} / 10
-
-## Executive Summary
-${evaluation.executive_summary}
-
-## Dimension Scores
-- **Clarity & Conciseness:** ${evaluation.clarity_score}/10
-  Critique: ${evaluation.clarity_critique}
-- **Confidence & Executive Presence:** ${evaluation.confidence_score}/10
-  Critique: ${evaluation.confidence_critique}
-- **Structural Organisation:** ${evaluation.structure_score}/10
-  Critique: ${evaluation.structure_critique}
-- **Relevance & Difficult Questions:** ${evaluation.relevance_score}/10
-  Critique: ${evaluation.relevance_critique}
-
-## Turn-by-Turn Gold Standard Rewrites
-${evaluation.turn_rewrites
-  .map(
-    (rw) => `### Turn ${rw.turn_number}
-**What you said:** "${rw.user_said}"
-**Critique:** ${rw.critique}
-**Say this instead:** "${rw.gold_standard}"`
-  )
-  .join("\n\n")}
-
-## 5-Minute Pre-Meeting Cheat Sheet
-### Top Talking Points
-${evaluation.cheat_sheet.top_talking_points.map((p) => `- ${p}`).join("\n")}
-
-### Defensive Shields
-${evaluation.cheat_sheet.defense_shields.map((s) => `- ${s}`).join("\n")}
-
-### Killer Questions to Ask
-${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
-`;
-
-    try {
-      await navigator.clipboard.writeText(md);
-      setCopiedMarkdown(true);
-      setTimeout(() => setCopiedMarkdown(false), 2500);
-    } catch {
-      // fallback
-    }
-  };
-
-  const handlePrint = () => {
-    window.print();
-  };
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const playbook = evaluation.objection_playbook || [];
 
   const dimensions = [
     {
@@ -96,6 +40,97 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
     },
   ];
 
+  const getScoreColor = (score: number) => {
+    if (score >= 8) return "var(--accent-emerald)";
+    if (score >= 6) return "var(--accent-gold)";
+    return "var(--accent-rose)";
+  };
+
+  const buildMarkdown = () => {
+    const md = `# Executive Meeting Preparation Report: ${persona.name} (${persona.company})
+**Overall Score:** ${evaluation.overall_score} / 10
+
+## Executive Summary
+${evaluation.executive_summary}
+
+## Dimension Scores
+${dimensions
+  .map(
+    (d) => `- **${d.title}:** ${d.score}/10
+  Critique: ${d.critique}
+${d.evidence.length > 0 ? d.evidence.map((q) => `  > "${q}"`).join("\n") : "  _No verbatim quote could be verified for this score._"}`
+  )
+  .join("\n")}
+
+## Objection Playbook
+${playbook
+  .map(
+    (o) => `### ${o.objection} (${o.category})
+${o.user_said ? `**Your answer:** "${o.user_said}"` : "**You did not answer this objection.**"}
+**What went wrong:** ${o.what_went_wrong}
+**Framework: ${o.framework_name}**
+${o.framework_steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}
+
+**Try this:** "${o.example_response}"`
+  )
+  .join("\n\n")}
+
+## Turn-by-Turn Gold Standard Rewrites
+${evaluation.turn_rewrites
+  .map(
+    (rw) => `### Your message #${rw.user_turn_index ?? rw.turn_number}
+**What you said:** "${rw.user_said}"
+**Critique:** ${rw.critique}
+**Say this instead:** "${rw.gold_standard}"`
+  )
+  .join("\n\n")}
+
+## 5-Minute Pre-Meeting Cheat Sheet
+### Top Talking Points
+${evaluation.cheat_sheet.top_talking_points.map((p) => `- ${p}`).join("\n")}
+
+### Defensive Shields
+${evaluation.cheat_sheet.defense_shields.map((s) => `- ${s}`).join("\n")}
+
+### Killer Questions to Ask
+${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
+`;
+
+    return md;
+  };
+
+  const handleCopyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown());
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+    setTimeout(() => setCopyStatus("idle"), 2500);
+  };
+
+  const handleDownloadMarkdown = () => {
+    const blob = new Blob([buildMarkdown()], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `prep-report-${persona.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Prints only the cheat sheet; the body class is removed once the print dialog closes
+  const handlePrint = () => {
+    document.body.classList.add("print-cheatsheet-only");
+    const cleanup = () => {
+      document.body.classList.remove("print-cheatsheet-only");
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    window.print();
+  };
+
+
   return (
     <div style={{ maxWidth: "1100px", margin: "0 auto", paddingBottom: "4rem" }}>
       {/* Top Header Actions */}
@@ -121,9 +156,12 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "0.75rem" }}>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
           <button className="btn btn-secondary" onClick={handleCopyMarkdown} id="btn-copy-markdown">
-            {copiedMarkdown ? "✓ Copied Markdown" : "📋 Copy as Markdown"}
+            {copyStatus === "copied" ? "✓ Copied" : copyStatus === "failed" ? "Copy blocked by browser" : "📋 Copy as Markdown"}
+          </button>
+          <button className="btn btn-secondary" onClick={handleDownloadMarkdown} id="btn-download-markdown">
+            ⬇ Download .md
           </button>
           <button className="btn btn-secondary" onClick={handlePrint} id="btn-print-cheatsheet">
             🖨️ Print Cheat Sheet
@@ -136,18 +174,11 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
 
       {/* Score Summary & Executive Assessment */}
       <div
-        className="glass-card"
-        style={{
-          padding: "2rem",
-          marginBottom: "2rem",
-          display: "grid",
-          gridTemplateColumns: "220px 1fr",
-          gap: "2.5rem",
-          alignItems: "center",
-        }}
+        className="glass-card grid-score-hero"
+        style={{ padding: "2rem", marginBottom: "2rem" }}
       >
         {/* Overall Score Circle */}
-        <div style={{ textAlign: "center", borderRight: "1px solid var(--border-subtle)", paddingRight: "1.5rem" }}>
+        <div className="score-hero-ring">
           <div
             style={{
               width: "130px",
@@ -195,7 +226,7 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
           Dimension Diagnostic Breakdown
         </h2>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
+        <div className="grid-2">
           {dimensions.map((dim, i) => (
             <div
               key={i}
@@ -249,8 +280,19 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
                 </p>
               </div>
 
-              {/* Evidence Quotes */}
-              {dim.evidence && dim.evidence.length > 0 && (
+              {/* Evidence Quotes: only quotes verified verbatim against a user turn survive */}
+              {dim.evidence.length === 0 ? (
+                <div
+                  style={{
+                    borderTop: "1px solid var(--border-subtle)",
+                    paddingTop: "0.75rem",
+                    fontSize: "0.8rem",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  No verbatim quote could be verified for this score, so treat it as lower confidence.
+                </div>
+              ) : (
                 <div
                   style={{
                     borderTop: "1px solid var(--border-subtle)",
@@ -278,6 +320,71 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
         </div>
       </div>
 
+      {/* Objection Playbook: framework coaching for the hardest pushback (PRD: a better framework for budget concerns) */}
+      {playbook.length > 0 && (
+        <div style={{ marginBottom: "2.5rem" }}>
+          <h2 style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--accent-cyan)" }}>
+            Objection Playbook: Handling the Hard Questions
+          </h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", marginBottom: "1rem" }}>
+            The toughest pushback {persona.name} raised, what your answer was missing, and a framework to use next time.
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+            {playbook.map((entry, i) => (
+              <div key={i} className="glass-card" style={{ padding: "1.5rem", borderLeft: "4px solid var(--accent-cyan)" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+                  <span className="badge badge-blue">{entry.category}</span>
+                  <h4 style={{ fontSize: "1rem", fontWeight: 700 }}>&ldquo;{entry.objection}&rdquo;</h4>
+                </div>
+
+                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.9rem" }}>
+                  {entry.user_said ? (
+                    <>
+                      <strong style={{ color: "var(--text-primary)" }}>Your answer (message #{entry.user_turn_index ?? entry.user_turn_number}):</strong>{" "}
+                      <em>&ldquo;{entry.user_said}&rdquo;</em>
+                    </>
+                  ) : (
+                    <strong style={{ color: "var(--accent-rose)" }}>You never directly answered this objection.</strong>
+                  )}
+                  <div style={{ marginTop: "0.4rem" }}>
+                    <strong style={{ color: "var(--text-primary)" }}>What went wrong:</strong> {entry.what_went_wrong}
+                  </div>
+                </div>
+
+                <div className="grid-2">
+                  <div style={{ padding: "1rem", background: "var(--bg-elevated)", borderRadius: "var(--radius-md)" }}>
+                    <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
+                      Framework: {entry.framework_name}
+                    </div>
+                    <ol style={{ paddingLeft: "1.2rem", display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.86rem" }}>
+                      {entry.framework_steps.map((step, sIdx) => (
+                        <li key={sIdx}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                  <div
+                    style={{
+                      padding: "1rem",
+                      background: "rgba(16, 185, 129, 0.1)",
+                      border: "1px solid rgba(16, 185, 129, 0.25)",
+                      borderRadius: "var(--radius-md)",
+                      fontSize: "0.9rem",
+                      color: "#d1fae5",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-emerald)", textTransform: "uppercase", marginBottom: "0.4rem" }}>
+                      Try this instead
+                    </div>
+                    &ldquo;{entry.example_response}&rdquo;
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Turn-by-Turn Post-Mortem & Rewrites */}
       <div style={{ marginBottom: "2.5rem" }}>
         <h2 style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: "1rem", color: "var(--accent-rose)" }}>
@@ -297,8 +404,8 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
                 borderLeft: "4px solid var(--accent-rose)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                <span className="badge badge-rose">Weak Moment: Turn {rw.turn_number}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+                <span className="badge badge-rose">Weak Moment: Your Message #{rw.user_turn_index ?? rw.turn_number}</span>
                 <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{rw.critique}</span>
               </div>
 
@@ -362,7 +469,7 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem" }}>
+        <div className="grid-3">
           {/* Top Talking Points */}
           <div
             style={{

@@ -3,9 +3,10 @@ export type ErrorCode =
   | "LLM_INVALID_OUTPUT"
   | "TURN_CAP"
   | "INSUFFICIENT_TURNS"
-  | "INGEST_BLOCKED"
   | "VALIDATION"
-  | "NOT_FOUND";
+  | "NOT_FOUND"
+  | "SESSION_ENDED"
+  | "INTERNAL_ERROR";
 
 export class AppError extends Error {
   public readonly code: ErrorCode;
@@ -42,12 +43,14 @@ export function toErrorResponse(err: unknown) {
     };
   }
 
-  const message = err instanceof Error ? err.message : "Internal server error";
+  // Unexpected errors are logged server-side; the client gets a generic message, never internals
+  console.error("Unhandled route error:", err);
+  const isBadJson = err instanceof SyntaxError;
   return {
-    status: 500,
+    status: isBadJson ? 400 : 500,
     body: {
-      code: "INTERNAL_ERROR" as ErrorCode,
-      message,
+      code: (isBadJson ? "VALIDATION" : "INTERNAL_ERROR") as ErrorCode,
+      message: isBadJson ? "Request body is not valid JSON" : "Something went wrong on the server. Please try again.",
     },
   };
 }

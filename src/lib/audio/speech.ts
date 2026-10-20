@@ -74,23 +74,16 @@ export function createSpeechRecognizer(params: {
   recognition.interimResults = true;
   recognition.lang = "en-US";
 
+  // Reports the whole transcript heard so far in this listening session (final + interim), so the caller
+  // can replace its draft text rather than append fragments that interim results would duplicate.
   recognition.onresult = (event: SpeechRecognitionEventLike) => {
-    let finalTranscript = "";
-    let interimTranscript = "";
-
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript;
-      } else {
-        interimTranscript += event.results[i][0].transcript;
-      }
+    let transcript = "";
+    let allFinal = true;
+    for (let i = 0; i < event.results.length; ++i) {
+      transcript += event.results[i][0].transcript;
+      if (!event.results[i].isFinal) allFinal = false;
     }
-
-    if (finalTranscript) {
-      params.onTranscript(finalTranscript, true);
-    } else if (interimTranscript) {
-      params.onTranscript(interimTranscript, false);
-    }
+    params.onTranscript(transcript.trim(), allFinal);
   };
 
   recognition.onerror = (event: SpeechRecognitionErrorLike) => {
@@ -105,14 +98,20 @@ export function createSpeechRecognizer(params: {
 }
 
 export function speakPersonaReply(text: string, onEnd?: () => void) {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    onEnd?.();
+    return;
+  }
 
   // Cancel any ongoing speech
   window.speechSynthesis.cancel();
 
   // Clean text from markdown or formatting characters for natural speech
   const cleanText = text.replace(/[*_#`[\]()]/g, "").trim();
-  if (!cleanText) return;
+  if (!cleanText) {
+    onEnd?.();
+    return;
+  }
 
   const utterance = new SpeechSynthesisUtterance(cleanText);
   utterance.rate = 1.02;
@@ -133,6 +132,7 @@ export function speakPersonaReply(text: string, onEnd?: () => void) {
 
   if (onEnd) {
     utterance.onend = onEnd;
+    utterance.onerror = onEnd;
   }
 
   window.speechSynthesis.speak(utterance);

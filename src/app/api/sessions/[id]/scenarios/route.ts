@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getReadyDb } from "@/lib/db";
 import { getLLMRouter } from "@/lib/ai/router";
 import {
   getScenariosSystemPrompt,
@@ -18,7 +18,7 @@ import { toErrorResponse, AppError } from "@/lib/errors";
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const sessionId = params.id;
-    const db = getDb();
+    const db = await getReadyDb();
 
     // 1. Fetch session
     const sessionRes = await db.execute({
@@ -76,12 +76,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const scenariosId = `scen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     // 4. Save to database
-    await db.execute({
+    const saved = await db.execute({
       sql: `INSERT INTO scenarios (id, session_id, objections, strategic_questions)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               objections = excluded.objections,
-              strategic_questions = excluded.strategic_questions`,
+              strategic_questions = excluded.strategic_questions
+            RETURNING id`,
       args: [
         scenariosId,
         sessionId,
@@ -99,7 +100,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({
       ok: true,
       scenarios: {
-        id: scenariosId,
+        id: saved.rows[0].id as string,
         session_id: sessionId,
         ...scenarios,
       },

@@ -1,0 +1,57 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hotseat-replay",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "replay",
+        "DATABASE_URL": "file:./data/e2e.db",
+        "MAX_TURNS": "10"
+      }
+    },
+    {
+      "name": "hotseat-live-nokeys",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "live",
+        "DATABASE_URL": "file:./data/e2e-live.db",
+        "OPENCODE_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "GROQ_API_KEY": ""
+      }
+    },
+    {
+      "name": "hotseat-live",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "live",
+        "DATABASE_URL": "file:./data/live-check.db"
+      }
+    }
+  ]
+}

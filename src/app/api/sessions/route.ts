@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
+import { getReadyDb } from "@/lib/db";
 import { meetingContextSchema } from "@/types";
 import { toErrorResponse } from "@/lib/errors";
+import { getEnv } from "@/lib/env";
 
 const createSessionSchema = z.object({
   title: z.string().min(1).default("Executive Meeting Preparation"),
   target_url: z.string().optional().nullable(),
-  raw_input: z.string().min(80, "Profile text must be at least 80 characters"),
+  raw_input: z
+    .string()
+    .min(80, "Profile text must be at least 80 characters")
+    .max(20000, "Profile text is too long (max 20,000 characters)"),
   meeting_context: meetingContextSchema,
   difficulty: z.enum(["warmup", "realistic", "hostile"]).default("realistic"),
-  max_turns: z.coerce.number().int().positive().default(10),
+  max_turns: z.coerce.number().int().min(2).max(30).optional(),
 });
 
 export async function POST(req: Request) {
@@ -29,9 +33,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const { title, target_url, raw_input, meeting_context, difficulty, max_turns } = parsed.data;
+    const { title, target_url, raw_input, meeting_context, difficulty } = parsed.data;
+    const max_turns = parsed.data.max_turns ?? getEnv().MAX_TURNS;
     const id = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const db = getDb();
+    const db = await getReadyDb();
 
     await db.execute({
       sql: `INSERT INTO sessions (id, title, target_url, raw_input, meeting_context, difficulty, max_turns, status)
@@ -68,7 +73,7 @@ export async function POST(req: Request) {
 
 export async function GET() {
   try {
-    const db = getDb();
+    const db = await getReadyDb();
     const result = await db.execute({
       sql: `SELECT id, created_at, title, target_url, raw_input, meeting_context, difficulty, max_turns, status
             FROM sessions ORDER BY created_at DESC LIMIT 50`,

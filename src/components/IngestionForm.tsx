@@ -1,7 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import type { Session, PersonaRecord } from "@/types";
+import { describeApiError, readJson } from "@/lib/apiErrors";
+import marcusFixture from "../../fixtures/marcus-vance.json";
+
+// Keeps prompts (and free-tier token use) bounded; the API accepts up to 20,000 including the optional hints
+const MAX_BIO_CHARS = 12000;
 
 interface IngestionFormProps {
   onSuccess: (session: Session, persona: PersonaRecord) => void;
@@ -25,54 +30,24 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const pendingSession = useRef<{ payload: string; session: Session } | null>(null);
 
-  // Load Seeded PRD Fixture: Marcus Vance, MD
-  const loadSeededFixture = async () => {
-    try {
-      const res = await fetch("/fixtures/marcus-vance.json");
-      let data;
-      if (res.ok) {
-        data = await res.json();
-      } else {
-        // Fallback embedded fixture if fetch fails
-        data = {
-          title: "Enterprise Workflow Automation Pitch - Apex Financial",
-          target_url: "https://www.linkedin.com/in/marcus-vance-risk-apex",
-          raw_input:
-            "Marcus Vance is Managing Director of Operational Risk & Compliance at Apex Financial Capital, where he oversees regulatory compliance, internal controls, and enterprise technology risk across retail and institutional trading divisions. Prior to Apex Financial, Marcus spent 11 years at Deloitte Risk Advisory leading SOX compliance, FedRAMP assessments, and Basel III implementation for global investment banks. He holds an MBA from Wharton and a B.S. in Accounting & Information Systems. Marcus is widely known in the firm for his zero-tolerance policy on security oversights, data governance ambiguity, or unvetted third-party integrations. He strongly favors verifiable SLA penalties, on-prem or isolated tenant architectures, and immutable audit logs over flashy front-end features.",
-          hints: {
-            role: "Managing Director, Operational Risk & Compliance",
-            industry: "Financial Services / Banking",
-            tenure: "18+ years across risk advisory and enterprise banking",
-            known_priorities: "SOC2 Type II, FedRAMP, data lineage, operational resiliency, immutable audit logs",
-          },
-          meeting_context: {
-            product_summary:
-              "AutoFlow Enterprise: An enterprise-grade workflow automation and audit orchestration platform. Features automated evidence collection, continuous SOC2/ISO27001 policy enforcement, fine-grained RBAC, and tamper-evident cryptographic audit trails.",
-            goal: "Secure an initial 60-day sandbox pilot within the compliance and operational risk department.",
-            meeting_type: "Enterprise Sales Pitch",
-            duration_minutes: 30,
-          },
-          difficulty: "realistic",
-        };
-      }
-
-      setProfileText(data.raw_input);
-      setLinkedInUrl(data.target_url || "");
-      setRoleHint(data.hints?.role || "");
-      setIndustryHint(data.hints?.industry || "");
-      setTenureHint(data.hints?.tenure || "");
-      setPrioritiesHint(data.hints?.known_priorities || "");
-      setProductSummary(data.meeting_context.product_summary);
-      setMeetingGoal(data.meeting_context.goal);
-      setMeetingType(data.meeting_context.meeting_type);
-      setDurationMinutes(data.meeting_context.duration_minutes);
-      setDifficulty(data.difficulty || "realistic");
-      setScrapeError(null);
-      setFormError(null);
-    } catch (err) {
-      console.error("Failed to load fixture:", err);
-    }
+  // Load Seeded PRD Fixture: Marcus Vance, MD (fictional benchmark persona)
+  const loadSeededFixture = () => {
+    const data = marcusFixture;
+    setProfileText(data.raw_input);
+    setLinkedInUrl(data.target_url || "");
+    setRoleHint(data.hints?.role || "");
+    setIndustryHint(data.hints?.industry || "");
+    setTenureHint(data.hints?.tenure || "");
+    setPrioritiesHint(data.hints?.known_priorities || "");
+    setProductSummary(data.meeting_context.product_summary);
+    setMeetingGoal(data.meeting_context.goal);
+    setMeetingType(data.meeting_context.meeting_type);
+    setDurationMinutes(data.meeting_context.duration_minutes);
+    setDifficulty(data.difficulty as "warmup" | "realistic" | "hostile");
+    setScrapeError(null);
+    setFormError(null);
   };
 
   // Best-effort LinkedIn scrape
@@ -129,53 +104,65 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
 
     setIsSubmitting(true);
 
+    const payload = JSON.stringify({
+      title: `Prep: ${roleHint || "Executive Counterpart"}`,
+      target_url: linkedInUrl.trim() || null,
+      raw_input: combinedRawInput,
+      meeting_context: {
+        product_summary: productSummary.trim(),
+        goal: meetingGoal.trim(),
+        meeting_type: meetingType,
+        duration_minutes: durationMinutes,
+      },
+      difficulty,
+    });
+
     try {
-      // 1. Create Session
-      const sessionRes = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: `Prep: ${roleHint || "Executive Counterpart"}`,
-          target_url: linkedInUrl.trim() || null,
-          raw_input: combinedRawInput,
-          meeting_context: {
-            product_summary: productSummary.trim(),
-            goal: meetingGoal.trim(),
-            meeting_type: meetingType,
-            duration_minutes: durationMinutes,
-          },
-          difficulty,
-        }),
-      });
-
-      const sessionData = await sessionRes.json();
-      if (!sessionRes.ok) {
-        throw new Error(sessionData.message || "Failed to create session");
+      // 1. Create the session, unless a previous attempt already created one for these exact inputs
+      let session = pendingSession.current?.payload === payload ? pendingSession.current.session : null;
+      if (!session) {
+        const sessionRes = await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+        });
+        const sessionData = await readJson<{ session: Session; code?: string; message?: string }>(sessionRes);
+        if (!sessionRes.ok || !sessionData?.session) {
+          setFormError(describeApiError(sessionData, "Failed to create session").message);
+          return;
+        }
+        session = sessionData.session;
+        pendingSession.current = { payload, session };
       }
-
-      const session = sessionData.session;
 
       // 2. Generate Persona
       const personaRes = await fetch(`/api/sessions/${session.id}/persona`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-
-      const personaData = await personaRes.json();
-      if (!personaRes.ok) {
-        throw new Error(personaData.message || "Failed to generate persona");
+      const personaData = await readJson<{ persona: PersonaRecord; code?: string; message?: string }>(personaRes);
+      if (!personaRes.ok || !personaData?.persona) {
+        const err = describeApiError(personaData, "Failed to generate persona");
+        setFormError(err.retryable ? `${err.message} Press Generate again to retry.` : err.message);
+        return;
       }
 
+      pendingSession.current = null;
       onSuccess(session, personaData.persona);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error generating persona";
-      setFormError(msg);
+    } catch {
+      setFormError("Could not reach the server. Check that it is running and retry.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const charCount = profileText.length;
+  // Shown next to the Generate button so a disabled button always says why
+  const missing = [
+    charCount < 80 ? `${80 - charCount} more characters of background` : null,
+    !productSummary.trim() ? "a product summary" : null,
+    !meetingGoal.trim() ? "a meeting goal" : null,
+  ].filter((m): m is string => m !== null);
 
   return (
     <div className="glass-card" style={{ padding: "2rem", maxWidth: "900px", margin: "0 auto" }}>
@@ -206,6 +193,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
 
       {formError && (
         <div
+          role="alert"
           style={{
             background: "rgba(244, 63, 94, 0.15)",
             border: "1px solid var(--accent-rose)",
@@ -228,7 +216,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
               Counterpart Background / Bio / Resume Text <span style={{ color: "var(--accent-rose)" }}>*</span>
             </label>
             <span style={{ fontSize: "0.75rem", color: charCount >= 80 ? "var(--accent-emerald)" : "var(--accent-amber)" }}>
-              {charCount} / 80 min chars
+              {charCount.toLocaleString()} chars · 80 min · {MAX_BIO_CHARS.toLocaleString()} max
             </span>
           </div>
 
@@ -239,8 +227,9 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
             placeholder="Paste their LinkedIn summary, career history, previous advisory roles, executive priorities, or notes..."
             value={profileText}
             onChange={(e) => setProfileText(e.target.value)}
+            maxLength={MAX_BIO_CHARS}
             style={{ width: "100%", resize: "vertical" }}
-            required
+            aria-required="true"
           />
 
           {/* Optional LinkedIn URL */}
@@ -256,7 +245,13 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
                 placeholder="https://www.linkedin.com/in/username"
                 value={linkedInUrl}
                 onChange={(e) => setLinkedInUrl(e.target.value)}
-                style={{ flex: 1 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleScrapeLinkedIn();
+                  }
+                }}
+                style={{ flex: 1, minWidth: 0 }}
               />
               <button
                 type="button"
@@ -269,15 +264,20 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
               </button>
             </div>
 
+            <div style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.35rem" }}>
+              LinkedIn usually hides profiles behind a sign-in wall, so this often fails. When it works it adds the public
+              headline and summary to the text above; pasting the About and Experience sections is the reliable path.
+            </div>
+
             {scrapeError && (
-              <div style={{ color: "var(--accent-amber)", fontSize: "0.8rem", marginTop: "0.4rem" }}>
+              <div role="status" style={{ color: "var(--accent-amber)", fontSize: "0.8rem", marginTop: "0.4rem" }}>
                 ⚠️ {scrapeError}
               </div>
             )}
           </div>
 
           {/* Context Hints Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+          <div className="grid-2" style={{ gap: "1rem", marginTop: "1rem" }}>
             <div>
               <label className="form-label" htmlFor="role-hint">Role / Seniority (Optional)</label>
               <input
@@ -322,11 +322,11 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
               placeholder="What are you pitching? Mention security certifications, deployment models, and core value prop..."
               value={productSummary}
               onChange={(e) => setProductSummary(e.target.value)}
-              required
+              aria-required="true"
             />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem" }}>
+          <div className="grid-split-wide" style={{ gap: "1rem" }}>
             <div className="form-group">
               <label className="form-label" htmlFor="meeting-goal">
                 Specific Meeting Goal <span style={{ color: "var(--accent-rose)" }}>*</span>
@@ -338,7 +338,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
                 placeholder="e.g. Secure a 60-day sandbox pilot with the risk committee"
                 value={meetingGoal}
                 onChange={(e) => setMeetingGoal(e.target.value)}
-                required
+                aria-required="true"
               />
             </div>
 
@@ -446,12 +446,18 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
         </div>
 
         {/* Submit Button */}
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+          {missing.length > 0 && !isSubmitting && (
+            <span id="generate-hint" style={{ fontSize: "0.8rem", color: "var(--accent-amber)" }}>
+              Still needed: {missing.join(", ")}.
+            </span>
+          )}
           <button
             type="submit"
             className="btn btn-primary"
             id="btn-generate-persona"
-            disabled={isSubmitting || charCount < 80}
+            aria-describedby={missing.length > 0 ? "generate-hint" : undefined}
+            disabled={isSubmitting || missing.length > 0}
             style={{ minWidth: "220px", padding: "0.85rem 1.5rem" }}
           >
             {isSubmitting ? "Synthesizing Persona..." : "Generate Persona Card →"}

@@ -2,18 +2,20 @@
 
 import React, { useState } from "react";
 import type { PersonaRecord, RiskPosture, TechnicalDepth } from "@/types";
+import { describeApiError, readJson } from "@/lib/apiErrors";
 
 interface PersonaCardProps {
   sessionId: string;
   initialPersona: PersonaRecord;
+  isContinuing: boolean;
   onContinue: () => void;
 }
 
-export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCardProps) {
+export function PersonaCard({ sessionId, initialPersona, isContinuing, onContinue }: PersonaCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [persona, setPersona] = useState<PersonaRecord>(initialPersona);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Form states for editing
   const [name, setName] = useState(initialPersona.name);
@@ -27,6 +29,21 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
   // Tag editors
   const [prioritiesStr, setPrioritiesStr] = useState(initialPersona.business_priorities.join("\n"));
   const [hotButtonsStr, setHotButtonsStr] = useState(initialPersona.hot_buttons.join("\n"));
+
+  // Discards unsaved edits by resetting every draft field to the last saved persona
+  const cancelEditing = () => {
+    setName(persona.name);
+    setTitle(persona.title);
+    setCompany(persona.company);
+    setBackground(persona.background);
+    setRiskPosture(persona.risk_posture as RiskPosture);
+    setTechnicalDepth(persona.technical_depth as TechnicalDepth);
+    setConversationalStyle(persona.conversational_style);
+    setPrioritiesStr(persona.business_priorities.join("\n"));
+    setHotButtonsStr(persona.hot_buttons.join("\n"));
+    setSaveMessage(null);
+    setIsEditing(false);
+  };
 
   const isUncertain = (field: string) => {
     return persona.uncertain_fields?.includes(field);
@@ -47,6 +64,12 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
+    if (business_priorities.length === 0 || hot_buttons.length === 0) {
+      setSaveMessage({ text: "Add at least one business priority and one hot button (one per line).", isError: true });
+      setIsSaving(false);
+      return;
+    }
+
     const updatedData = {
       name: name.trim(),
       title: title.trim(),
@@ -54,8 +77,8 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
       background: background.trim(),
       risk_posture: riskPosture,
       technical_depth: technicalDepth,
-      business_priorities: business_priorities.length > 0 ? business_priorities : ["Maintain operational resilience"],
-      hot_buttons: hot_buttons.length > 0 ? hot_buttons : ["Unsubstantiated claims"],
+      business_priorities,
+      hot_buttons,
       conversational_style: conversationalStyle.trim(),
       uncertain_fields: persona.uncertain_fields,
     };
@@ -67,20 +90,21 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
         body: JSON.stringify(updatedData),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to update persona");
+      const data = await readJson<{ persona: PersonaRecord; code?: string; message?: string }>(res);
+      if (!res.ok || !data?.persona) {
+        setSaveMessage({ text: describeApiError(data, "Failed to update persona").message, isError: true });
+        return;
       }
 
       setPersona((prev) => ({
         ...prev,
         ...data.persona,
-        edited_by_user: 1,
+        edited_by_user: true,
       }));
       setIsEditing(false);
-      setSaveMessage("Persona successfully updated.");
-    } catch (err: unknown) {
-      setSaveMessage(err instanceof Error ? err.message : "Error saving persona");
+      setSaveMessage({ text: "Persona updated. The sparring partner will use your edits.", isError: false });
+    } catch {
+      setSaveMessage({ text: "Could not reach the server to save your edits.", isError: true });
     } finally {
       setIsSaving(false);
     }
@@ -93,7 +117,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
             <span className="badge badge-gold">Synthesized Persona Dossier</span>
-            {persona.edited_by_user === 1 && (
+            {persona.edited_by_user && (
               <span className="badge badge-blue">Edited by User</span>
             )}
           </div>
@@ -118,7 +142,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
           ) : (
             <button
               className="btn btn-secondary"
-              onClick={() => setIsEditing(false)}
+              onClick={cancelEditing}
               style={{ fontSize: "0.85rem" }}
             >
               Cancel
@@ -129,17 +153,18 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
 
       {saveMessage && (
         <div
+          role={saveMessage.isError ? "alert" : "status"}
           style={{
             padding: "0.6rem 1rem",
             marginBottom: "1rem",
             borderRadius: "var(--radius-md)",
             fontSize: "0.85rem",
-            background: "rgba(16, 185, 129, 0.15)",
-            border: "1px solid var(--accent-emerald)",
-            color: "#a7f3d0",
+            background: saveMessage.isError ? "rgba(244, 63, 94, 0.15)" : "rgba(16, 185, 129, 0.15)",
+            border: `1px solid ${saveMessage.isError ? "var(--accent-rose)" : "var(--accent-emerald)"}`,
+            color: saveMessage.isError ? "#fecdd3" : "#a7f3d0",
           }}
         >
-          {saveMessage}
+          {saveMessage.text}
         </div>
       )}
 
@@ -175,7 +200,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
           </div>
 
           {/* Key Traits Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+          <div className="grid-2" style={{ gap: "1rem", marginBottom: "1.5rem" }}>
             <div
               style={{
                 padding: "1rem",
@@ -220,7 +245,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
           </div>
 
           {/* Priorities & Hot Buttons */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
+          <div className="grid-2" style={{ gap: "1.5rem", marginBottom: "1.5rem" }}>
             <div>
               <h4 style={{ fontSize: "0.8rem", textTransform: "uppercase", color: "var(--text-muted)", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>
                 Top Business Priorities
@@ -294,16 +319,17 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
               className="btn btn-primary"
               id="btn-confirm-persona"
               onClick={onContinue}
+              disabled={isContinuing}
               style={{ padding: "0.85rem 1.75rem", fontSize: "0.95rem" }}
             >
-              Confirm Persona & Map Scenarios →
+              {isContinuing ? "Mapping scenarios…" : "Confirm Persona & Map Scenarios →"}
             </button>
           </div>
         </div>
       ) : (
         /* Edit Mode */
         <form onSubmit={handleSave}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+          <div className="grid-2" style={{ gap: "1rem", marginBottom: "1rem" }}>
             <div className="form-group">
               <label className="form-label">Full Name</label>
               <input
@@ -348,7 +374,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
             />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+          <div className="grid-2" style={{ gap: "1rem", marginBottom: "1rem" }}>
             <div className="form-group">
               <label className="form-label">Risk Posture</label>
               <select
@@ -376,7 +402,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+          <div className="grid-2" style={{ gap: "1rem", marginBottom: "1rem" }}>
             <div className="form-group">
               <label className="form-label">Business Priorities (One per line)</label>
               <textarea
@@ -413,7 +439,7 @@ export function PersonaCard({ sessionId, initialPersona, onContinue }: PersonaCa
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => setIsEditing(false)}
+              onClick={cancelEditing}
             >
               Cancel
             </button>

@@ -1,3 +1,4 @@
+import "./load-env";
 import { runMigrations } from "../src/lib/db";
 
 async function main() {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getReadyDb } from "@/lib/db";
 import { getLLMRouter } from "@/lib/ai/router";
 import {
   getEvaluateSystemPrompt,
@@ -7,21 +7,22 @@ import {
   EVALUATE_PROMPT_VERSION,
 } from "@/lib/ai/prompts/evaluate";
 import {
-  evaluationOutputSchema,
+  buildEvaluationSchema,
   type EvaluationOutput,
+  type EvaluationRecord,
   type PersonaData,
   type Turn,
   type RiskPosture,
   type TechnicalDepth,
   type Stance,
 } from "@/types";
-import { filterValidQuotes } from "@/lib/quotes";
+import { postValidateEvaluation } from "@/lib/evaluation";
 import { toErrorResponse, AppError } from "@/lib/errors";
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const sessionId = params.id;
-    const db = getDb();
+    const db = await getReadyDb();
 
     // 1. Fetch session
     const sessionRes = await db.execute({
@@ -82,102 +83,34 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       );
     }
 
-    // 4. Call LLM Router for Evaluation
+    // 4. Call LLM Router for Evaluation. The schema is built per request so rewrite turn numbers
+    //    that don't point at a real user turn fail validation and go through the single repair retry.
     const router = getLLMRouter();
-    const systemPrompt = getEvaluateSystemPrompt(persona, meetingContext);
-    const userPrompt = getEvaluateUserPrompt(turns);
-
     const result = await router.complete<EvaluationOutput>({
       purpose: "evaluate",
-      system: systemPrompt,
-      user: userPrompt,
-      schema: evaluationOutputSchema,
+      system: getEvaluateSystemPrompt(persona, meetingContext),
+      user: getEvaluateUserPrompt(turns),
+      schema: buildEvaluationSchema(userTurns.map((t) => t.turn_number)),
       promptVersion: EVALUATE_PROMPT_VERSION,
       sessionId,
     });
 
-    const evalData = result.data;
-
-    // 5. Code Post-Validation: Verify evidence quotes are substrings of user turns
-    const userTurnTexts = userTurns.map((t) => t.content);
-
-    evalData.clarity_evidence = filterValidQuotes(evalData.clarity_evidence, userTurnTexts);
-    evalData.confidence_evidence = filterValidQuotes(evalData.confidence_evidence, userTurnTexts);
-    evalData.structure_evidence = filterValidQuotes(evalData.structure_evidence, userTurnTexts);
-    evalData.relevance_evidence = filterValidQuotes(evalData.relevance_evidence, userTurnTexts);
-
-    // If any dimension score is >= 8 and has no remaining valid evidence quotes, populate with a user turn excerpt
-    if (evalData.clarity_evidence.length === 0 && userTurnTexts.length > 0) {
-      evalData.clarity_evidence = [userTurnTexts[0].slice(0, 80)];
-    }
-    if (evalData.confidence_evidence.length === 0 && userTurnTexts.length > 0) {
-      evalData.confidence_evidence = [userTurnTexts[0].slice(0, 80)];
-    }
-    if (evalData.structure_evidence.length === 0 && userTurnTexts.length > 0) {
-      evalData.structure_evidence = [userTurnTexts[0].slice(0, 80)];
-    }
-    if (evalData.relevance_evidence.length === 0 && userTurnTexts.length > 0) {
-      evalData.relevance_evidence = [userTurnTexts[0].slice(0, 80)];
+    // 5. Code post-validation: verbatim quotes, DB-sourced user_said, overall score computed in code
+    const { evaluation, droppedQuotes } = postValidateEvaluation(result.data, userTurns);
+    if (droppedQuotes > 0) {
+      console.warn(`Evaluation ${sessionId}: dropped ${droppedQuotes} evidence quote(s) not found verbatim in a user turn`);
     }
 
-    // 6. Code Post-Validation: Match turn rewrites to real user turns and populate user_said strictly from DB
-    const validatedRewrites = evalData.turn_rewrites
-      .map((rw) => {
-        const matchingTurn = userTurns.find((ut) => ut.turn_number === rw.turn_number);
-        if (matchingTurn) {
-          return {
-            turn_number: rw.turn_number,
-            user_said: matchingTurn.content, // Populated strictly from DB!
-            critique: rw.critique,
-            gold_standard: rw.gold_standard,
-          };
-        }
-        return null;
-      })
-      .filter((rw): rw is NonNullable<typeof rw> => rw !== null);
-
-    // If rewrites didn't match turn numbers, map to existing user turns
-    let finalRewrites: Array<{ turn_number: number; user_said: string; critique: string; gold_standard: string }> = [];
-    if (validatedRewrites.length < 2 && userTurns.length >= 2) {
-      const fallbackRw1 = {
-        turn_number: userTurns[0].turn_number,
-        user_said: userTurns[0].content,
-        critique: evalData.turn_rewrites[0]?.critique || "Opening statement lacked immediate executive framing.",
-        gold_standard: evalData.turn_rewrites[0]?.gold_standard || "Marcus, thanks for the time. In short: we eliminate manual audit preparation and guarantee cryptographic data lineage with full SOC2 compliance.",
-      };
-      const fallbackRw2 = {
-        turn_number: userTurns[1].turn_number,
-        user_said: userTurns[1].content,
-        critique: evalData.turn_rewrites[1]?.critique || "Did not address regulatory examination risks directly.",
-        gold_standard: evalData.turn_rewrites[1]?.gold_standard || "Our platform features dedicated single-tenant database partitions, CMEK encryption, and contractual SLA penalties to protect against regulatory liabilities.",
-      };
-      finalRewrites = [fallbackRw1, fallbackRw2];
-    } else {
-      finalRewrites = validatedRewrites;
-    }
-
-    // 7. Overall score computed strictly in code as mean of 4 scores
-    const overallScore = Number(
-      (
-        (evalData.clarity_score +
-          evalData.confidence_score +
-          evalData.structure_score +
-          evalData.relevance_score) /
-        4
-      ).toFixed(1)
-    );
-
-    // 8. Save evaluation to SQLite database
-    const evaluationId = `eval_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    await db.execute({
+    // 6. Save evaluation (one per session; re-evaluating replaces it)
+    const saved = await db.execute({
       sql: `INSERT INTO evaluations (
               id, session_id, clarity_score, clarity_critique, clarity_evidence,
               confidence_score, confidence_critique, confidence_evidence,
               structure_score, structure_critique, structure_evidence,
               relevance_score, relevance_critique, relevance_evidence,
-              overall_score, executive_summary, turn_rewrites, cheat_sheet
+              overall_score, executive_summary, turn_rewrites, objection_playbook, cheat_sheet
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               clarity_score = excluded.clarity_score,
               clarity_critique = excluded.clarity_critique,
@@ -194,44 +127,47 @@ export async function POST(req: Request, { params }: { params: { id: string } })
               overall_score = excluded.overall_score,
               executive_summary = excluded.executive_summary,
               turn_rewrites = excluded.turn_rewrites,
-              cheat_sheet = excluded.cheat_sheet`,
+              objection_playbook = excluded.objection_playbook,
+              cheat_sheet = excluded.cheat_sheet
+            RETURNING id`,
       args: [
-        evaluationId,
+        `eval_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         sessionId,
-        evalData.clarity_score,
-        evalData.clarity_critique,
-        JSON.stringify(evalData.clarity_evidence),
-        evalData.confidence_score,
-        evalData.confidence_critique,
-        JSON.stringify(evalData.confidence_evidence),
-        evalData.structure_score,
-        evalData.structure_critique,
-        JSON.stringify(evalData.structure_evidence),
-        evalData.relevance_score,
-        evalData.relevance_critique,
-        JSON.stringify(evalData.relevance_evidence),
-        overallScore,
-        evalData.executive_summary,
-        JSON.stringify(finalRewrites),
-        JSON.stringify(evalData.cheat_sheet),
+        evaluation.clarity_score,
+        evaluation.clarity_critique,
+        JSON.stringify(evaluation.clarity_evidence),
+        evaluation.confidence_score,
+        evaluation.confidence_critique,
+        JSON.stringify(evaluation.confidence_evidence),
+        evaluation.structure_score,
+        evaluation.structure_critique,
+        JSON.stringify(evaluation.structure_evidence),
+        evaluation.relevance_score,
+        evaluation.relevance_critique,
+        JSON.stringify(evaluation.relevance_evidence),
+        evaluation.overall_score,
+        evaluation.executive_summary,
+        JSON.stringify(evaluation.turn_rewrites),
+        JSON.stringify(evaluation.objection_playbook),
+        JSON.stringify(evaluation.cheat_sheet),
       ],
     });
 
-    // 9. Update session status to evaluated
+    // 7. Update session status to evaluated
     await db.execute({
       sql: `UPDATE sessions SET status = 'evaluated' WHERE id = ?`,
       args: [sessionId],
     });
 
+    const record: EvaluationRecord = {
+      id: saved.rows[0].id as string,
+      session_id: sessionId,
+      ...evaluation,
+    };
+
     return NextResponse.json({
       ok: true,
-      evaluation: {
-        id: evaluationId,
-        session_id: sessionId,
-        ...evalData,
-        turn_rewrites: finalRewrites,
-        overall_score: overallScore,
-      },
+      evaluation: record,
       provider: result.provider,
       model: result.model,
     });

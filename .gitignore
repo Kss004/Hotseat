@@ -32,3 +32,13 @@ yarn-error.log*
 *.pem
 .vscode/
 .idea/
+
+# Build metadata
+*.tsbuildinfo
+
+# Any env file except the committed template
+.env*
+!.env.example
+
+# Vercel
+.vercel/

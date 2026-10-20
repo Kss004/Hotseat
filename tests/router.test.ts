@@ -10,11 +10,10 @@ const testSchema = z.object({
   comment: z.string(),
 });
 
-vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    execute: vi.fn().mockResolvedValue({ rows: [] }),
-  }),
-}));
+vi.mock("@/lib/db", () => {
+  const client = { execute: vi.fn().mockResolvedValue({ rows: [] }) };
+  return { getDb: () => client, getReadyDb: async () => client };
+});
 
 describe("LLMRouter unit tests", () => {
   beforeEach(() => {

@@ -59,7 +59,7 @@ export type PersonaData = z.infer<typeof personaSchema>;
 export interface PersonaRecord extends PersonaData {
   id: string;
   session_id: string;
-  edited_by_user: number;
+  edited_by_user: boolean;
   updated_at: string;
 }
 
@@ -143,6 +143,16 @@ export const stanceOutputSchema = z.object({
 // Evaluation & Post-Mortem Schemas
 // ==========================================
 
+export const objectionPlaybookEntrySchema = z.object({
+  objection: z.string().min(1),
+  category: objectionCategorySchema,
+  user_turn_number: z.number().int().positive().nullable(),
+  what_went_wrong: z.string().min(1),
+  framework_name: z.string().min(1),
+  framework_steps: z.array(z.string().min(1)).min(3).max(5),
+  example_response: z.string().min(1),
+});
+
 export const evaluationOutputSchema = z.object({
   clarity_score: z.number().int().min(1).max(10),
   clarity_critique: z.string().min(1),
@@ -169,6 +179,9 @@ export const evaluationOutputSchema = z.object({
     })
   ).min(2),
 
+  // Framework coaching for the hardest pushback the persona raised (e.g. budget/ROI, security)
+  objection_playbook: z.array(objectionPlaybookEntrySchema).min(1).max(3),
+
   cheat_sheet: z.object({
     top_talking_points: z.array(z.string()).min(1),
     defense_shields: z.array(z.string()).min(1),
@@ -177,6 +190,45 @@ export const evaluationOutputSchema = z.object({
 });
 
 export type EvaluationOutput = z.infer<typeof evaluationOutputSchema>;
+export type ObjectionPlaybookEntry = z.infer<typeof objectionPlaybookEntrySchema>;
+
+/**
+ * Per-request schema: rewrite and playbook turn numbers must point at real user turns.
+ * Failing this triggers the router's single repair retry with the exact error, instead of patching output in code.
+ */
+export function buildEvaluationSchema(userTurnNumbers: number[]) {
+  const valid = new Set(userTurnNumbers);
+  const list = userTurnNumbers.join(", ");
+  return evaluationOutputSchema.superRefine((data, ctx) => {
+    const rewriteTurns = new Set<number>();
+    data.turn_rewrites.forEach((rw, i) => {
+      if (!valid.has(rw.turn_number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["turn_rewrites", i, "turn_number"],
+          message: `turn_number ${rw.turn_number} is not a USER turn. Valid user turn numbers: ${list}`,
+        });
+      }
+      rewriteTurns.add(rw.turn_number);
+    });
+    if (rewriteTurns.size < Math.min(2, valid.size)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["turn_rewrites"],
+        message: `turn_rewrites must cover at least 2 distinct USER turns from: ${list}`,
+      });
+    }
+    data.objection_playbook.forEach((entry, i) => {
+      if (entry.user_turn_number !== null && !valid.has(entry.user_turn_number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["objection_playbook", i, "user_turn_number"],
+          message: `user_turn_number ${entry.user_turn_number} is not a USER turn. Use null or one of: ${list}`,
+        });
+      }
+    });
+  });
+}
 
 export interface EvaluationRecord {
   id: string;
@@ -197,10 +249,13 @@ export interface EvaluationRecord {
   executive_summary: string;
   turn_rewrites: {
     turn_number: number;
+    /** 1-based position among the user's own messages (turn_number also counts persona replies) */
+    user_turn_index?: number;
     user_said: string;
     critique: string;
     gold_standard: string;
   }[];
+  objection_playbook: (ObjectionPlaybookEntry & { user_said: string | null; user_turn_index?: number | null })[];
   cheat_sheet: {
     top_talking_points: string[];
     defense_shields: string[];

@@ -1,6 +1,6 @@
 import type { PersonaData, MeetingContext, Turn } from "@/types";
 
-export const EVALUATE_PROMPT_VERSION = "v1.0";
+export const EVALUATE_PROMPT_VERSION = "v1.1";
 
 export function getEvaluateSystemPrompt(persona: PersonaData, meeting: MeetingContext): string {
   return `You are a premier executive communications coach and master deal strategist.
@@ -45,14 +45,24 @@ CRITICAL EVIDENCE & REWRITE RULES:
 1. For every dimension, provide 1 to 3 EXACT quotes from the user's turns as evidence. Every quote MUST be an exact verbatim substring from the user's transcript. Do NOT alter words or invent quotes.
 2. For scores 8 or above, at least one verbatim evidence quote is strictly mandatory.
 3. Select the 2 to 3 weakest user turns and supply a turn_rewrite: specify the exact turn_number (must match a user message index), a critique of why it fell short with this specific persona, and a 'gold_standard' script demonstrating what the user should have said instead.
-4. Provide a 5-minute pre-meeting cheat sheet with:
+4. objection_playbook (1 to 3 entries): pick the hardest pushback ${persona.name} raised in the transcript (budget/ROI and security/compliance first if they came up). For each:
+   - objection: the pushback in one sentence, as the persona framed it
+   - category: one of "Risk/Compliance/Security", "ROI/Financial", "Implementation", "Status Quo/Vendor"
+   - user_turn_number: the USER turn that answered it, or null if the user never answered it
+   - what_went_wrong: the specific gap in the user's answer (be concrete; if the answer was strong, say what would make it airtight)
+   - framework_name: a short named framework suited to this objection type (e.g. "Acknowledge, Quantify, Prove, Commit" for budget; "Control, Evidence, Contract" for security)
+   - framework_steps: 3 to 5 steps, each one line, describing how to apply the framework to THIS persona
+   - example_response: a 2 to 4 sentence answer applying the framework, using only facts from the meeting context or the user's own claims. Do not invent product capabilities, certifications or numbers.
+5. Gold-standard rewrites follow the same rule: no invented product facts; where a number is needed, write a placeholder like [your payback period].
+6. Provide a 5-minute pre-meeting cheat sheet with:
    - top_talking_points (3 key messages)
    - defense_shields (2 battle-tested objection responses)
    - killer_questions (3 provocative discovery questions)
-5. Return ONLY valid JSON matching the schema.`;
+7. Return ONLY valid JSON matching the schema.`;
 }
 
 export function getEvaluateUserPrompt(turns: Turn[]): string {
+  const userTurnNumbers = turns.filter((t) => t.role === "user").map((t) => t.turn_number);
   const formattedTranscript = turns
     .map(
       (t) =>
@@ -63,6 +73,8 @@ export function getEvaluateUserPrompt(turns: Turn[]): string {
   return `Here is the full meeting transcript:
 
 ${formattedTranscript}
+
+Valid USER turn numbers (the only values allowed for turn_number and user_turn_number): ${userTurnNumbers.join(", ")}
 
 Evaluate the user's performance and output the complete evaluation JSON:
 {
@@ -84,6 +96,17 @@ Evaluate the user's performance and output the complete evaluation JSON:
       "turn_number": number (must be an actual user turn index),
       "critique": string,
       "gold_standard": string (exact executive-level phrasing to use instead)
+    }
+  ],
+  "objection_playbook": [
+    {
+      "objection": string,
+      "category": "Risk/Compliance/Security" | "ROI/Financial" | "Implementation" | "Status Quo/Vendor",
+      "user_turn_number": number | null,
+      "what_went_wrong": string,
+      "framework_name": string,
+      "framework_steps": string[] (3-5),
+      "example_response": string
     }
   ],
   "cheat_sheet": {

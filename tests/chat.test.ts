@@ -1,14 +1,17 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { getDb, runMigrations } from "@/lib/db";
-import { stanceOutputSchema, type Stance } from "@/types";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { getReadyDb } from "@/lib/db";
+import { resetEnvCache } from "@/lib/env";
+import { POST as chatPOST } from "@/app/api/sessions/[id]/chat/route";
+import { POST as endPOST } from "@/app/api/sessions/[id]/end/route";
+import {
+  TRANSCRIPT, createSession, jsonRequest, params, readSse, resetDb,
+  seedPersonaAndScenarios, seedTranscript, useLiveMode, useReplayMode,
+} from "./helpers";
+import { stanceOutputSchema, type Stance, type ScenariosOutput } from "@/types";
 import { getChatSystemPrompt } from "@/lib/ai/prompts/chat";
 import fixtureScenarios from "../fixtures/llm/scenarios.json";
 
 describe("Step 4: Streaming Sparring Chat & Stance Validation", () => {
-  beforeAll(async () => {
-    await runMigrations();
-  });
-
   it("1. Stance schema validates allowed enum values strictly", () => {
     const validStances: Stance[] = [
       "skeptical",
@@ -48,7 +51,7 @@ describe("Step 4: Streaming Sparring Chat & Stance Validation", () => {
         meeting_type: "Pitch",
         duration_minutes: 30,
       },
-      objections: fixtureScenarios.objections as any,
+      objections: fixtureScenarios.objections as ScenariosOutput["objections"],
       difficulty: "realistic",
     });
 
@@ -58,40 +61,106 @@ describe("Step 4: Streaming Sparring Chat & Stance Validation", () => {
     expect(prompt).toContain("at most 100 to 120 words");
   });
 
-  it("3. Enforces TURN_CAP at database level when user reaches max_turns", async () => {
-    const db = getDb();
-    const sessionId = `sess_turncap_${Date.now()}`;
+  describe("POST /api/sessions/[id]/chat (real route, replay LLM)", () => {
+    beforeAll(() => useReplayMode());
+    afterAll(() => useLiveMode());
+    beforeEach(() => resetDb());
 
-    // Insert session with max_turns = 2
-    await db.execute({
-      sql: `INSERT INTO sessions (id, title, raw_input, meeting_context, difficulty, max_turns, status)
-            VALUES (?, 'Test Cap', 'Raw input exceeding 80 chars for turn cap validation.', ?, 'realistic', 2, 'roleplay_active')`,
-      args: [sessionId, JSON.stringify({ product_summary: "P", goal: "G", meeting_type: "T", duration_minutes: 30 })],
+    it("3. Streams tokens, persists both turns, and emits a stance in the enum before done", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+
+      const res = await chatPOST(jsonRequest({ message: "Marcus, here is how we isolate your audit logs." }), params(sessionId));
+      expect(res.headers.get("Content-Type")).toContain("text/event-stream");
+      const events = await readSse(res);
+
+      const kinds = events.map((e) => e.event);
+      expect(kinds.filter((k) => k === "token").length).toBeGreaterThan(0);
+      expect(kinds.slice(-2)).toEqual(["stance", "done"]);
+      const stance = events.find((e) => e.event === "stance")!;
+      expect(["skeptical", "guarded", "neutral", "intrigued", "convinced", "impatient"]).toContain(stance.stance);
+
+      const db = await getReadyDb();
+      const turns = await db.execute({ sql: `SELECT role, turn_number, stance FROM turns WHERE session_id = ? ORDER BY turn_number`, args: [sessionId] });
+      expect(turns.rows.map((r) => r.role)).toEqual(["user", "assistant"]);
+      expect(turns.rows[1].stance).toBe(stance.stance);
     });
 
-    // Insert 2 user turns
-    const t1 = `t1_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const t2 = `t2_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await db.execute({
-      sql: `INSERT INTO turns (id, session_id, turn_number, role, content) VALUES (?, ?, 1, 'user', 'msg 1')`,
-      args: [t1, sessionId],
-    });
-    await db.execute({
-      sql: `INSERT INTO turns (id, session_id, turn_number, role, content) VALUES (?, ?, 2, 'user', 'msg 2')`,
-      args: [t2, sessionId],
+    it("4. Rejects the message with TURN_CAP once max_turns user turns exist, without writing a turn", async () => {
+      const sessionId = await createSession({ max_turns: 2 });
+      await seedPersonaAndScenarios(sessionId);
+      await seedTranscript(sessionId);
+
+      const res = await chatPOST(jsonRequest({ message: "One more point." }), params(sessionId));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("TURN_CAP");
+
+      const db = await getReadyDb();
+      const count = await db.execute({ sql: `SELECT COUNT(*) AS c FROM turns WHERE session_id = ?`, args: [sessionId] });
+      expect(Number(count.rows[0].c)).toBe(TRANSCRIPT.length);
     });
 
-    // Check count
-    const countRes = await db.execute({
-      sql: `SELECT COUNT(*) as count FROM turns WHERE session_id = ? AND role = 'user'`,
-      args: [sessionId],
-    });
-    const count = Number(countRes.rows[0].count);
-    expect(count).toBe(2);
+    it("5. Rejects messages after the session has ended", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+      await seedTranscript(sessionId);
+      expect((await endPOST(jsonRequest({}), params(sessionId))).status).toBe(200);
 
-    // Verifying turn cap condition
-    const maxTurns = 2;
-    const isCapped = count >= maxTurns;
-    expect(isCapped).toBe(true);
+      const res = await chatPOST(jsonRequest({ message: "Wait, one more thing." }), params(sessionId));
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("SESSION_ENDED");
+    });
+
+    it("5b. Refuses to end a session before 2 user turns, so it can still be evaluated later", async () => {
+      const sessionId = await createSession();
+      await seedPersonaAndScenarios(sessionId);
+      await seedTranscript(sessionId, TRANSCRIPT.slice(0, 2));
+
+      const res = await endPOST(jsonRequest({}), params(sessionId));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("INSUFFICIENT_TURNS");
+
+      const chat = await chatPOST(jsonRequest({ message: "Let me continue." }), params(sessionId));
+      expect(chat.headers.get("Content-Type")).toContain("text/event-stream");
+      await chat.text();
+    });
+
+    it("6. Rejects empty and malformed bodies with VALIDATION", async () => {
+      const sessionId = await createSession();
+      const empty = await chatPOST(jsonRequest({ message: "   " }), params(sessionId));
+      expect(empty.status).toBe(400);
+      expect((await empty.json()).code).toBe("VALIDATION");
+
+      const malformed = await chatPOST(
+        new Request("http://localhost/api", { method: "POST", body: "{not json" }),
+        params(sessionId)
+      );
+      expect(malformed.status).toBe(400);
+    });
+
+    it("7. With no providers configured, emits LLM_UNAVAILABLE and rolls back the user turn", async () => {
+      useLiveMode();
+      const saved = { ...process.env };
+      delete process.env.OPENCODE_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GROQ_API_KEY;
+      delete process.env.LOCAL_LLM_URL;
+      resetEnvCache();
+      try {
+        const sessionId = await createSession();
+        await seedPersonaAndScenarios(sessionId);
+        const events = await readSse(await chatPOST(jsonRequest({ message: "Hello Marcus." }), params(sessionId)));
+
+        expect(events.map((e) => e.event)).toEqual(["error"]);
+        expect(events[0].code).toBe("LLM_UNAVAILABLE");
+
+        const db = await getReadyDb();
+        const count = await db.execute({ sql: `SELECT COUNT(*) AS c FROM turns WHERE session_id = ?`, args: [sessionId] });
+        expect(Number(count.rows[0].c)).toBe(0);
+      } finally {
+        process.env = saved;
+        useReplayMode();
+      }
+    });
   });
 });
