@@ -2,9 +2,9 @@
 
 Hotseat prepares you for a high-stakes meeting. You give it the counterpart's profile and your meeting context. It builds an editable persona, predicts their objections, suggests strategic questions, plays the counterpart in a live streaming role-play, and then coaches you on clarity, confidence, structure and relevance. The coaching includes a named framework for the hardest pushback you faced, such as a budget objection.
 
-> **Live demo:** https://hotseat-lac.vercel.app (private; the access code is in the submission email) · **Demo video:** _add link_
+> **Live demo:** https://hotseat-lac.vercel.app · **Demo video:** _add link_
 >
-> To try it: enter the access code, click **Load Marcus Vance (MD Benchmark)** and follow the demo script in section 6.
+> To try it: click **Load Marcus Vance (MD Benchmark)** and follow the demo script in section 6.
 
 ---
 
@@ -28,7 +28,6 @@ npm run dev                    # http://localhost:3000
 | `DATABASE_URL` | no | Defaults to `file:./data/app.db`. Use `libsql://…` for Turso |
 | `DATABASE_AUTH_TOKEN` | Turso only | |
 | `MAX_TURNS` | no | Default user-turn cap per session (10) |
-| `ACCESS_CODE` | no | If set, visitors must enter this code first. Recommended for a public deployment |
 | `RATE_LIMIT` | no | Per-IP request limits, `on` by default |
 | `GLOBAL_DAILY_LLM_LIMIT` | no | AI-backed requests per day across all visitors (500) |
 
@@ -85,7 +84,7 @@ Key files:
   - The overall score is computed in code as the mean of the four dimensions.
 - **Stance is a second, small structured call** made after the streamed reply finishes (decision D2). Plain text streams fast, and the stance classification still gets schema validation.
 - **Paste-first ingestion.** LinkedIn doesn't offer a public profile API to unauthenticated clients, so the URL fetch is best-effort and clearly labelled (see Limitations).
-- **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. An optional `ACCESS_CODE` puts the whole app behind a code (httpOnly cookie holding a hash of the code; guesses are rate-limited). Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
+- **Safe to put on a public URL.** Every API route is rate-limited per client IP, with counters in the database so the limits hold across serverless instances, and AI routes also share a daily cap so rotating IPs can't drain the keys. Session ids are random 128-bit values, there is no route that lists sessions, and every response carries a Content-Security-Policy and other security headers.
 - **Model IDs come only from the environment**, so a model deprecation is a config change, not a code change.
 
 ---
@@ -128,7 +127,7 @@ Failure path: remove both keys from `.env.local` and restart. Generating a perso
 ## 7. Limitations
 
 - **LinkedIn:** a logged-out request usually hits LinkedIn's sign-in wall or its 999 bot block. When the fetch does work, it only gets the public headline and summary meta tags. The app says so on screen and asks you to paste the About and Experience text, which is the reliable path. Scraping behind a login would violate LinkedIn's terms, so it isn't attempted.
-- **No user accounts.** Anyone with a session link can open that session (links are unguessable random ids). `ACCESS_CODE` keeps strangers out of the whole app, but everyone who has the code shares it.
+- **No user accounts.** The app is open to anyone with the URL, and anyone with a session link can open that session (links are unguessable random ids). Rate limits, not logins, protect the API keys.
 - **Free-tier rate limits** on the providers can cause a temporary `LLM_UNAVAILABLE`; retrying works once the quota resets.
 - **Voice** uses the browser's Web Speech API (best in Chrome or Edge). It falls back to text where that API is unsupported.
 - **Rate limits are per IP**, so people behind one office or campus network share a limit.
@@ -141,12 +140,12 @@ A local SQLite file doesn't persist on serverless hosts, so use a [Turso](https:
 
 1. Create a Turso database and copy its `libsql://…` URL and an auth token.
 2. Import the GitHub repo into [Vercel](https://vercel.com/new). The defaults (Next.js, `npm run build`) are correct.
-3. Add environment variables: at least one provider key with its model ID (see section 1), `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, and `ACCESS_CODE` if the URL will be shared. Leave `LLM_MODE` unset or `live`.
+3. Add environment variables: at least one provider key with its model ID (see section 1), `DATABASE_URL`, and `DATABASE_AUTH_TOKEN`. Leave `LLM_MODE` unset or `live`.
 4. Deploy. Tables are created on the first request. Then run the demo script on the live URL.
 
 Long AI routes declare their own time limits (`maxDuration`: 60s, and 120s for evaluation).
 
-The live instance runs exactly this setup: Vercel (Washington, D.C.) with a Turso database in AWS US East, OpenCode Go as the primary model, and `ACCESS_CODE` set. The full Marcus Vance demo was run there end to end on 2026-10-20: the evaluation finished in under a minute, and the report reloaded from the database.
+The live instance runs exactly this setup: Vercel (Washington, D.C.) with a Turso database in AWS US East, and OpenCode Go as the primary model. The full Marcus Vance demo was run there end to end on 2026-10-20: the evaluation finished in under a minute, and the report reloaded from the database.
 
 Two setup mistakes to avoid:
 - `DATABASE_AUTH_TOKEN` must be a **database** token (the database page → Create Token), not a Platform API token from Settings → API Tokens. The wrong one shows up as `LibsqlError: SERVER_ERROR: Server returned HTTP status 401` in the Vercel logs.

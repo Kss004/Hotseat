@@ -17,8 +17,6 @@ const BUCKETS = {
   end: { limit: 30, windowSec: 3600, usesLlm: false },
   "linkedin-fetch": { limit: 20, windowSec: 3600, usesLlm: false },
   read: { limit: 300, windowSec: 3600, usesLlm: false },
-  // Access code attempts: limits guessing
-  access: { limit: 10, windowSec: 900, usesLlm: false },
 } as const satisfies Record<string, { limit: number; windowSec: number; usesLlm: boolean }>;
 
 export type RateLimitBucket = keyof typeof BUCKETS;

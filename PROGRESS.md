@@ -68,7 +68,7 @@ Last verified: 2026-10-20 (`npm test` 59/59, `npm run typecheck` clean, `npm run
 - [x] Session ids are `sess_` + a random UUID instead of a timestamp (#2)
 - [x] Security headers: CSP, frame blocking, nosniff, referrer and permissions policies, HSTS in production; checked on a production build with no CSP violations
 - [x] Per-IP rate limits on every API route, stored in libSQL, plus a global daily cap on AI requests; 429 `RATE_LIMITED` (#3–#7; 31st `end` call in an hour returned 429 on a production build)
-- [x] Optional `ACCESS_CODE` gate: middleware redirect and 401, hashed httpOnly cookie, rate-limited guesses, no open redirect (#8–#12; checked in the browser on a production build)
+- [x] ~~Optional `ACCESS_CODE` gate~~: added, then removed at the user's request so the live demo is open; rate limits remain the protection
 - [x] `maxDuration` on AI routes (60s, evaluation 120s)
 
 ## Step 7: Stretch - Voice
