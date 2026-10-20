@@ -32,6 +32,8 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const pendingSession = useRef<{ payload: string; session: Session } | null>(null);
+  // Focused when a LinkedIn fetch fails, so the user lands on the paste box
+  const profileRef = useRef<HTMLTextAreaElement>(null);
 
   // Load Seeded PRD Fixture: Marcus Vance, MD (fictional benchmark persona)
   const loadSeededFixture = () => {
@@ -72,9 +74,11 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
         });
       } else {
         setScrapeError(data.reason || "Couldn't read this profile. Paste the text instead.");
+        profileRef.current?.focus();
       }
     } catch {
       setScrapeError("Couldn't read this profile. Paste the text instead.");
+      profileRef.current?.focus();
     } finally {
       setIsScraping(false);
     }
@@ -215,18 +219,25 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
         <div style={{ marginBottom: "2rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
             <label className="form-label" htmlFor="profile-text">
-              Counterpart Background / Bio / Resume Text <span style={{ color: "var(--accent-rose)" }}>*</span>
+              Counterpart&apos;s Profile <span style={{ color: "var(--accent-rose)" }}>*</span>
             </label>
             <span style={{ fontSize: "0.75rem", color: charCount >= 80 ? "var(--accent-emerald)" : "var(--accent-amber)" }}>
               {charCount.toLocaleString()} chars · 80 min · {MAX_BIO_CHARS.toLocaleString()} max
             </span>
           </div>
 
+          <div id="profile-text-help" style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>
+            Open their LinkedIn profile, copy the <strong>About</strong> and <strong>Experience</strong> sections, and paste
+            them here. A company bio, press release or your own notes work too.
+          </div>
+
           <textarea
+            ref={profileRef}
             id="profile-text"
             rows={5}
             className="form-control"
-            placeholder="Paste their LinkedIn summary, career history, previous advisory roles, executive priorities, or notes..."
+            placeholder="e.g. Head of Operational Risk at a UK bank. 15 years in risk and controls, previously led SOX reviews at a Big Four firm. Owns operational resilience and third-party risk..."
+            aria-describedby="profile-text-help"
             value={profileText}
             onChange={(e) => setProfileText(e.target.value)}
             maxLength={MAX_BIO_CHARS}
@@ -237,7 +248,7 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
           {/* Optional LinkedIn URL */}
           <div style={{ marginTop: "1rem" }}>
             <label className="form-label" htmlFor="linkedin-url">
-              LinkedIn Profile URL (Optional Best-Effort Fetch)
+              LinkedIn Profile URL (optional extra)
             </label>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <input
@@ -267,8 +278,8 @@ export function IngestionForm({ onSuccess }: IngestionFormProps) {
             </div>
 
             <div style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.35rem" }}>
-              LinkedIn usually hides profiles behind a sign-in wall, so this often fails. When it works it adds the public
-              headline and summary to the text above; pasting the About and Experience sections is the reliable path.
+              LinkedIn hides most profiles from automated requests, so this usually can&apos;t read the profile. When it can,
+              it adds the public headline and summary to the text above. Pasting, as described above, always works.
             </div>
 
             {scrapeError && (
