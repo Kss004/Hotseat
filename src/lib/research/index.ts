@@ -11,6 +11,8 @@ import {
 import type { MeetingContext, PersonaData, ResearchRecord } from "@/types";
 
 const CACHE_TTL_SEC = 24 * 60 * 60;
+// Bumped whenever result filtering changes, so entries filtered under older rules are never served (v2: brand matching)
+const CACHE_VERSION = "v2";
 const DAY_SEC = 86400;
 
 const OFF_REASON = "Live research was turned off for this session.";
@@ -103,7 +105,8 @@ async function runResearch(persona: PersonaData, meeting: MeetingContext): Promi
     product: meeting.product_summary,
     uncertainFields: persona.uncertain_fields,
   };
-  const companyKey = normalizeCompanyKey(persona.company);
+  const name = normalizeCompanyKey(persona.company);
+  const companyKey = name ? `${CACHE_VERSION}:${name}` : "";
 
   // Unknown or placeholder companies: let the client report "skipped" (no request) before any cache or quota use
   if (isPlaceholderCompany(input.company, input.uncertainFields)) {

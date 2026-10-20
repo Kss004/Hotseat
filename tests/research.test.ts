@@ -122,13 +122,26 @@ describe("Live company research (Tavily) in the briefing", () => {
     ];
     await db.execute({
       sql: `INSERT INTO research_cache (company_key, queries, findings, fetched_at) VALUES (?, '[]', ?, ?)`,
-      args: ["apex financial capital", JSON.stringify(stale), Math.floor(Date.now() / 1000)],
+      args: ["v2:apex financial capital", JSON.stringify(stale), Math.floor(Date.now() / 1000)],
     });
 
     const sessionId = await createSession();
     const result = await researchForSession(sessionId, persona, meeting);
     expect(result.cached).toBe(true);
     expect(result.findings.map((f) => f.url)).toEqual(["https://news.example.com/a"]);
+  });
+
+  it("5c. Cache entries from older filtering rules (unversioned keys) are ignored", async () => {
+    const db = await getReadyDb();
+    const stale = [{ title: "Old result", url: "https://news.example.com/old", source: "news.example.com", snippet: "x" }];
+    await db.execute({
+      sql: `INSERT INTO research_cache (company_key, queries, findings, fetched_at) VALUES (?, '[]', ?, ?)`,
+      args: ["apex financial capital", JSON.stringify(stale), Math.floor(Date.now() / 1000)],
+    });
+
+    const result = await researchForSession(await createSession(), persona, meeting);
+    expect(result.cached).toBeUndefined();
+    expect(result.findings.map((f) => f.url)).not.toContain("https://news.example.com/old");
   });
 
   it("6. A Tavily outage is recorded as unavailable and nothing is cached", async () => {

@@ -380,6 +380,27 @@ describe("helpers", () => {
     expect(result.queries).toEqual([`"HSBC" news`, `"HSBC UK" regulation compliance risk`]);
   });
 
+  it("a brand-only match must read as business news, so a namesake person is dropped", async () => {
+    const division: ResearchInput = { company: "Santander UK", title: "CRO", product: "x" };
+    const results = [
+      { title: "Santander to shut 44 more branches", url: "https://news.example.com/branches", content: "The bank said customers are moving online.", score: 0.9 },
+      { title: "Blue Jays receive injury news surrounding Anthony Santander", url: "https://sports.example.com/santander", content: "The outfielder will miss two weeks.", score: 0.8 },
+      { title: "Santander UK financial crime statement", url: "https://news.example.com/fc", content: "Statement on controls.", score: 0.7 },
+    ];
+    const fetchImpl = fetchByTopic({
+      news: () => Promise.resolve(okResponse(results)),
+      general: () => Promise.resolve(okResponse([])),
+    });
+
+    const result = await researchCompany(division, { apiKey: KEY, fetchImpl: asFetch(fetchImpl) });
+
+    // The full-name match needs no business words; the brand-only match does; the namesake is dropped
+    expect(result.findings.map((f) => f.url)).toEqual([
+      "https://news.example.com/branches",
+      "https://news.example.com/fc",
+    ]);
+  });
+
   it("drops people profiles, social networks and job listings, and asks Tavily to exclude them", async () => {
     const results = [
       { title: "Apex Financial Capital faces regulator inquiry", url: "https://news.example.com/apex-inquiry", content: "Apex Financial Capital is under review.", score: 0.9 },

@@ -125,9 +125,19 @@ export function brandName(company: string): string {
   return squash(brand).replace(/ /g, "").length >= MIN_BRAND_LENGTH ? brand : full;
 }
 
-/** Normalized names a result may mention: the full company name, and its parent brand when different. */
-function companyMatchKeys(company: string): string[] {
-  return [...new Set([normalizeCompanyKey(company), normalizeCompanyKey(brandName(company))])].filter(Boolean);
+/**
+ * A brand on its own can be a person's or a product's name ("Santander" the bank vs. the baseball player), so a
+ * result that names only the brand, not the full company, must also read as business news.
+ */
+const BUSINESS_CONTEXT =
+  /\b(bank|banks|banking|lender|insurer|plc|shares|stock|investors?|profits?|revenue|earnings|results|customers|branch|branches|regulators?|regulatory|fca|pra|sec|fined|ceo|chief executive|acquisition|merger|annual report|company|firm|business|subsidiary)\b/;
+
+/** True when the result names the company, or names its parent brand in a business context. */
+function mentionsCompany(text: string, company: string): boolean {
+  const full = normalizeCompanyKey(company);
+  const brand = normalizeCompanyKey(brandName(company));
+  if (full && text.includes(` ${full} `)) return true;
+  return Boolean(brand && brand !== full && text.includes(` ${brand} `) && BUSINESS_CONTEXT.test(text));
 }
 
 const PLACEHOLDER_KEYS = new Set(PLACEHOLDER_NAMES.map(squash));
@@ -189,8 +199,7 @@ function truncateSnippet(text: string): string {
 
 /** Validates raw Tavily results, keeps only company mentions on http(s) URLs, dedupes, sorts and caps. */
 function toFindings(raw: unknown[], company: string): ResearchFinding[] {
-  const matchKeys = companyMatchKeys(company);
-  if (matchKeys.length === 0) return [];
+  if (!normalizeCompanyKey(company)) return [];
 
   const candidates: { finding: ResearchFinding; score: number; key: string }[] = [];
   for (const item of raw) {
@@ -201,9 +210,8 @@ function toFindings(raw: unknown[], company: string): ResearchFinding[] {
 
     const title = collapse(typeof entry.title === "string" ? entry.title : "");
     const content = collapse(typeof entry.content === "string" ? entry.content : "");
-    // Whole-word match on the full name or parent brand, so "Apex" doesn't match "Apexology" or "Bapex"
-    const text = ` ${squash(`${title} ${content}`)} `;
-    if (!matchKeys.some((key) => text.includes(` ${key} `))) continue;
+    // Whole-word match, so "Apex" doesn't match "Apexology" or "Bapex"
+    if (!mentionsCompany(` ${squash(`${title} ${content}`)} `, company)) continue;
 
     const finding: ResearchFinding = {
       title: title || url.hostname,
