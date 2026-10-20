@@ -175,6 +175,21 @@ describe("Deployment security", () => {
       expect(safeNextPath(null)).toBe("/");
     });
 
+    it("#13 spaces around ACCESS_CODE in the host's settings don't lock everyone out", async () => {
+      process.env.ACCESS_CODE = " demo-2026 \n";
+      resetEnvCache();
+      const { POST } = await import("@/app/api/access/route");
+      const res = await POST(jsonRequest({ code: "demo-2026" }));
+      expect(res.status).toBe(200);
+
+      const withCookie = await middleware(
+        new NextRequest("http://localhost/api/sessions", {
+          headers: { cookie: `${ACCESS_COOKIE}=${await accessToken("demo-2026")}` },
+        })
+      );
+      expect(withCookie.headers.get("x-middleware-next")).toBe("1");
+    });
+
     it("#12 with no ACCESS_CODE set, the app stays open", async () => {
       delete process.env.ACCESS_CODE;
       resetEnvCache();

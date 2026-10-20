@@ -3,7 +3,8 @@ import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 
 /** When ACCESS_CODE is set, every page and API route requires the cookie that /api/access issues. */
 export async function middleware(req: NextRequest) {
-  const code = process.env.ACCESS_CODE;
+  // Trimmed the same way as getEnv(), so the cookie /api/access issues always matches
+  const code = process.env.ACCESS_CODE?.trim();
   if (!code) return NextResponse.next();
 
   const { pathname, search } = req.nextUrl;
