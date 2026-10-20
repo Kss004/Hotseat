@@ -7,6 +7,8 @@ import { PersonaCard } from "@/components/PersonaCard";
 import { BriefingView } from "@/components/BriefingView";
 import { SparringArena } from "@/components/SparringArena";
 import { AnalyticsReport } from "@/components/AnalyticsReport";
+import { RecentSessions } from "@/components/RecentSessions";
+import { forgetSession, rememberSession } from "@/lib/recentSessions";
 import type { Session, PersonaRecord, ScenariosRecord, ResearchRecord, Turn, EvaluationRecord } from "@/types";
 import { describeApiError, readJson } from "@/lib/apiErrors";
 
@@ -56,12 +58,23 @@ export default function Home() {
         message?: string;
       }>(res);
       if (!res.ok || !data?.ok) {
-        setGlobalError({ message: `${describeApiError(data, "Could not restore that session.").message} Starting a new preparation instead.` });
+        // A session that no longer exists shouldn't stay in the recent list
+        if (data?.code === "NOT_FOUND") forgetSession(sid);
+        const reason = describeApiError(data, "Could not restore that session.").message.replace(/[.!]?$/, ".");
+        setGlobalError({ message: `${reason} Starting a new preparation instead.` });
         return;
       }
       {
         setSession(data.session);
-        if (data.persona) setPersona(data.persona);
+        if (data.persona) {
+          setPersona(data.persona);
+          rememberSession({
+            id: sid,
+            counterpart: data.persona.name,
+            company: data.persona.company,
+            score: data.evaluation?.overall_score,
+          });
+        }
         if (data.scenarios) setScenarios(data.scenarios);
         if (data.research) setResearch(data.research);
         if (data.turns) setTurns(data.turns);
@@ -93,6 +106,7 @@ export default function Home() {
   const handleIngestSuccess = (newSession: Session, newPersona: PersonaRecord) => {
     setSession(newSession);
     setPersona(newPersona);
+    rememberSession({ id: newSession.id, counterpart: newPersona.name, company: newPersona.company });
     setStage("persona");
     updateUrlSessionId(newSession.id);
   };
@@ -153,6 +167,14 @@ export default function Home() {
       }
 
       setEvaluation(data.evaluation);
+      if (persona) {
+        rememberSession({
+          id: session.id,
+          counterpart: persona.name,
+          company: persona.company,
+          score: data.evaluation.overall_score,
+        });
+      }
       setStage("analytics");
     } catch {
       setGlobalError({ message: "Could not reach the server.", retry: handleEndSimulation });
@@ -291,7 +313,12 @@ export default function Home() {
           </div>
         )}
 
-        {!isRestoring && stage === "ingest" && <IngestionForm onSuccess={handleIngestSuccess} />}
+        {!isRestoring && stage === "ingest" && (
+          <>
+            <IngestionForm onSuccess={handleIngestSuccess} />
+            <RecentSessions />
+          </>
+        )}
 
         {stage === "persona" && persona && session && (
           <div>
