@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { getReadyDb } from "@/lib/db";
 import { meetingContextSchema } from "@/types";
@@ -35,7 +36,8 @@ export async function POST(req: Request) {
 
     const { title, target_url, raw_input, meeting_context, difficulty } = parsed.data;
     const max_turns = parsed.data.max_turns ?? getEnv().MAX_TURNS;
-    const id = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    // The session link is the only key to a session, so the id must be unguessable (122 random bits)
+    const id = `sess_${randomUUID().replace(/-/g, "")}`;
     const db = await getReadyDb();
 
     await db.execute({
