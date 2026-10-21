@@ -15,6 +15,37 @@ import type {
 } from "./types";
 import type { LLMPurpose } from "@/types";
 
+// Defaults sized for the persona/scenarios calls (about 20-25s on a healthy provider); routes override as needed
+export const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+export const DEFAULT_BUDGET_MS = 50_000;
+export const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 20_000;
+// Not worth starting a provider (or a repair retry) with less time than this left in the budget
+const MIN_ATTEMPT_MS = 5_000;
+
+class ProviderTimeoutError extends Error {
+  constructor(provider: string, ms: number) {
+    super(`${provider} did not respond within ${Math.round(ms / 1000)}s`);
+    this.name = "ProviderTimeoutError";
+  }
+}
+
+/** Runs a provider call with an abort signal and rejects with ProviderTimeoutError once `ms` passes. */
+async function withTimeout<T>(provider: string, ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new ProviderTimeoutError(provider, ms));
+    }, ms);
+  });
+  try {
+    return await Promise.race([run(controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class LLMRouter {
   private providers: LLMProvider[];
 
@@ -110,14 +141,25 @@ export class LLMRouter {
     }
 
     let lastError: unknown = null;
+    let budgetExhausted = false;
+    const callTimeoutMs = options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+    const deadline = Date.now() + (options.budgetMs ?? DEFAULT_BUDGET_MS);
 
     for (let i = 0; i < availableProviders.length; i++) {
       const provider = availableProviders[i];
+      const remaining = deadline - Date.now();
+      if (remaining < MIN_ATTEMPT_MS) {
+        budgetExhausted = true;
+        console.warn(`Time budget for ${options.purpose} spent; not trying ${provider.name} or later providers.`);
+        break;
+      }
       try {
-        const response = await provider.complete(options.system, options.user, true, options.sessionId);
+        const response = await withTimeout(provider.name, Math.min(callTimeoutMs, remaining), (signal) =>
+          provider.complete(options.system, options.user, true, options.sessionId, signal)
+        );
 
         // Attempt JSON parse and validation
-        const validated = await this.validateOrRepair(provider, options, response);
+        const validated = await this.validateOrRepair(provider, options, response, Math.min(callTimeoutMs, deadline - Date.now()));
 
         await this.logCall({
           sessionId: options.sessionId,
@@ -146,7 +188,8 @@ export class LLMRouter {
           model: provider.getModel(),
           promptVersion: options.promptVersion,
           status: i < availableProviders.length - 1 ? "failover" : "error",
-          errorCode: err instanceof AppError ? err.code : errMessage.slice(0, 100),
+          errorCode:
+            err instanceof AppError ? err.code : err instanceof ProviderTimeoutError ? "TIMEOUT" : errMessage.slice(0, 100),
         });
 
         console.warn(`Provider ${provider.name} failed: ${errMessage}. Trying fallback if available.`);
@@ -155,6 +198,13 @@ export class LLMRouter {
 
     if (lastError instanceof AppError && lastError.code === "LLM_INVALID_OUTPUT") {
       throw lastError;
+    }
+    if (budgetExhausted || lastError instanceof ProviderTimeoutError) {
+      throw new AppError(
+        "LLM_UNAVAILABLE",
+        "The AI providers are responding slowly right now. Please retry in a moment.",
+        503
+      );
     }
     // Upstream detail is logged above and in llm_calls; the client gets an honest, non-leaky message
     throw new AppError(
@@ -167,7 +217,8 @@ export class LLMRouter {
   private async validateOrRepair<T>(
     provider: LLMProvider,
     options: CompleteOptions<T>,
-    response: ProviderResponse
+    response: ProviderResponse,
+    repairTimeoutMs: number
   ): Promise<T> {
     let rawJson: unknown;
     let parseError: string | null = null;
@@ -197,6 +248,12 @@ export class LLMRouter {
       parseError = `Schema validation failed: ${parsed.error.message}`;
     }
 
+    // Without enough time left for a repair, fail over now rather than run past the route's deadline
+    if (repairTimeoutMs < MIN_ATTEMPT_MS) {
+      console.warn(`Structured output validation failed on ${provider.name}: ${parseError}. No time left for a repair retry.`);
+      throw new AppError("LLM_INVALID_OUTPUT", "The AI returned a malformed response. Please retry.", 502);
+    }
+
     // Attempt 1-shot repair retry
     console.warn(`Structured output validation failed: ${parseError}. Attempting 1-shot repair retry...`);
 
@@ -210,7 +267,9 @@ ${response.rawText}
 Please correct the errors and output strictly valid JSON matching the schema.`;
 
     try {
-      const repairResponse = await provider.complete(repairSystem, repairUser, true, options.sessionId);
+      const repairResponse = await withTimeout(provider.name, repairTimeoutMs, (signal) =>
+        provider.complete(repairSystem, repairUser, true, options.sessionId, signal)
+      );
       let repairCleaned = repairResponse.rawText.trim();
       if (repairCleaned.startsWith("```json")) {
         repairCleaned = repairCleaned.slice(7);
@@ -229,6 +288,7 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
       }
       throw new Error(`Repaired output still invalid: ${repairedParsed.error.message}`);
     } catch (retryErr) {
+      if (retryErr instanceof ProviderTimeoutError) throw retryErr;
       console.warn(`Repair retry failed on ${provider.name}:`, retryErr);
       throw new AppError(
         "LLM_INVALID_OUTPUT",
@@ -269,18 +329,38 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
     }
 
     let lastError: unknown = null;
+    const firstTokenTimeoutMs = options.firstTokenTimeoutMs ?? DEFAULT_FIRST_TOKEN_TIMEOUT_MS;
 
     for (let i = 0; i < availableProviders.length; i++) {
       const provider = availableProviders[i];
       let emittedAnyToken = false;
+      const controller = new AbortController();
 
       try {
-        const streamGenerator = provider.stream(options.system, options.messages, options.sessionId);
+        const iterator = provider.stream(options.system, options.messages, options.sessionId, controller.signal);
         const startTime = Date.now();
 
-        for await (const chunk of streamGenerator) {
+        // Only the wait for the first token is capped: before it, failing over is still safe; after it, never
+        let firstTimer: ReturnType<typeof setTimeout> | undefined;
+        const firstTokenTimeout = new Promise<never>((_, reject) => {
+          firstTimer = setTimeout(() => {
+            controller.abort();
+            reject(new ProviderTimeoutError(provider.name, firstTokenTimeoutMs));
+          }, firstTokenTimeoutMs);
+        });
+        let first: IteratorResult<string, void>;
+        try {
+          first = await Promise.race([iterator.next(), firstTokenTimeout]);
+        } finally {
+          clearTimeout(firstTimer);
+        }
+
+        if (!first.done) {
           emittedAnyToken = true;
-          yield chunk;
+          yield first.value;
+          for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
+            yield chunk;
+          }
         }
 
         const latencyMs = Date.now() - startTime;
@@ -312,7 +392,7 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
           model: provider.getModel(),
           promptVersion: options.promptVersion,
           status: i < availableProviders.length - 1 ? "failover" : "error",
-          errorCode: errMessage.slice(0, 100),
+          errorCode: err instanceof ProviderTimeoutError ? "TIMEOUT" : errMessage.slice(0, 100),
         });
 
         console.warn(`Provider ${provider.name} stream failed before first token: ${errMessage}. Attempting fallback...`);
@@ -322,7 +402,9 @@ Please correct the errors and output strictly valid JSON matching the schema.`;
     console.error("All streaming providers failed. Last error:", lastError);
     throw new AppError(
       "LLM_UNAVAILABLE",
-      "All AI providers failed to respond. This is usually a temporary rate limit; please retry in a moment.",
+      lastError instanceof ProviderTimeoutError
+        ? "The AI providers are responding slowly right now. Please retry in a moment."
+        : "All AI providers failed to respond. This is usually a temporary rate limit; please retry in a moment.",
       503
     );
   }

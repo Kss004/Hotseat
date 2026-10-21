@@ -21,9 +21,13 @@ import { toErrorResponse, AppError } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
-export const maxDuration = 120;
+export const maxDuration = 180;
+// The evaluation is the largest output, so each call gets longer, but the chain must still end inside maxDuration
+const ROUTE_BUDGET_MS = 160_000;
+const EVAL_CALL_TIMEOUT_MS = 75_000;
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
+  const routeStart = Date.now();
   try {
     await enforceRateLimit(req, "evaluate");
     const sessionId = params.id;
@@ -92,6 +96,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     //    that don't point at a real user turn fail validation and go through the single repair retry.
     const router = getLLMRouter();
     const result = await router.complete<EvaluationOutput>({
+      timeoutMs: EVAL_CALL_TIMEOUT_MS,
+      budgetMs: ROUTE_BUDGET_MS - (Date.now() - routeStart),
       purpose: "evaluate",
       system: getEvaluateSystemPrompt(persona, meetingContext),
       user: getEvaluateUserPrompt(turns),

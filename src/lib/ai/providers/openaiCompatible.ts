@@ -33,7 +33,8 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     system: string,
     user: string,
     jsonMode: boolean = false,
-    sessionId?: string | null
+    sessionId?: string | null,
+    signal?: AbortSignal
   ): Promise<ProviderResponse> {
     const messages: Array<{ role: "system" | "user"; content: string }> = [];
     if (system) {
@@ -50,6 +51,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         messages,
         response_format: jsonMode ? { type: "json_object" } : undefined,
       }),
+      signal,
     });
 
     if (!res.ok) {
@@ -71,7 +73,8 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   async *stream(
     system: string,
     messages: LLMMessage[],
-    sessionId?: string | null
+    sessionId?: string | null,
+    signal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     const formattedMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
     if (system) {
@@ -89,6 +92,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         messages: formattedMessages,
         stream: true,
       }),
+      signal,
     });
 
     if (!res.ok || !res.body) {

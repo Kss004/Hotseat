@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { LLMRouter } from "@/lib/ai/router";
 import { AppError } from "@/lib/errors";
@@ -251,5 +251,121 @@ describe("LLMRouter unit tests", () => {
       // Verified fallback was NOT invoked because mid-stream switch is prohibited
       expect(fallbackProvider.stream).not.toHaveBeenCalled();
     }
+  });
+
+  describe("timeouts and time budget", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Never answers; rejects only when the router aborts it
+    const hangingProvider = (name: string): LLMProvider => ({
+      name,
+      getModel: () => `${name}-test`,
+      isAvailable: () => true,
+      complete: vi.fn().mockImplementation(
+        (_s: string, _u: string, _j?: boolean, _id?: string | null, signal?: AbortSignal) =>
+          new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))))
+      ),
+      stream: vi.fn().mockImplementation(async function* (
+        _s: string,
+        _m: LLMMessage[],
+        _id?: string | null,
+        signal?: AbortSignal
+      ) {
+        await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+        yield "never";
+      }),
+    });
+
+    const answeringProvider = (name: string): LLMProvider => ({
+      name,
+      getModel: () => `${name}-test`,
+      isAvailable: () => true,
+      complete: vi.fn().mockResolvedValue({
+        rawText: JSON.stringify({ score: 7, comment: "fast" }),
+        provider: name,
+        model: `${name}-test`,
+        latencyMs: 5,
+      }),
+      stream: vi.fn().mockImplementation(async function* () {
+        yield "fast reply";
+      }),
+    });
+
+    it("7. A provider that runs past its per-call timeout is aborted and the router fails over", async () => {
+      const slow = hangingProvider("opencode");
+      const fast = answeringProvider("gemini");
+      const router = new LLMRouter([slow, fast]);
+
+      const pending = router.complete({
+        purpose: "scenarios",
+        system: "s",
+        user: "u",
+        schema: testSchema,
+        promptVersion: "v1.0",
+        timeoutMs: 30_000,
+        budgetMs: 100_000,
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await pending;
+
+      expect(result.provider).toBe("gemini");
+      const signal = (slow.complete as ReturnType<typeof vi.fn>).mock.calls[0][4] as AbortSignal;
+      expect(signal.aborted).toBe(true);
+    });
+
+    it("8. The time budget stops the failover chain and ends in LLM_UNAVAILABLE, not a platform timeout", async () => {
+      const first = hangingProvider("opencode");
+      const second = hangingProvider("gemini");
+      const third = answeringProvider("groq");
+      const router = new LLMRouter([first, second, third]);
+
+      const pending = router.complete({
+        purpose: "scenarios",
+        system: "s",
+        user: "u",
+        schema: testSchema,
+        promptVersion: "v1.0",
+        timeoutMs: 30_000,
+        budgetMs: 50_000,
+      });
+      const outcome = expect(pending).rejects.toMatchObject({ code: "LLM_UNAVAILABLE" });
+      // First call times out at 30s; the second only gets the 20s left in the budget
+      await vi.advanceTimersByTimeAsync(50_000);
+      await outcome;
+
+      const secondSignal = (second.complete as ReturnType<typeof vi.fn>).mock.calls[0][4] as AbortSignal;
+      expect(secondSignal.aborted).toBe(true);
+      expect(third.complete).not.toHaveBeenCalled();
+    });
+
+    it("9. Streaming fails over when the first token does not arrive in time", async () => {
+      const slow = hangingProvider("opencode");
+      const fast = answeringProvider("gemini");
+      const router = new LLMRouter([slow, fast]);
+
+      const tokens: string[] = [];
+      const consume = (async () => {
+        for await (const token of router.stream({
+          purpose: "chat",
+          system: "s",
+          messages: [{ role: "user", content: "hi" }],
+          promptVersion: "v1.0",
+          firstTokenTimeoutMs: 20_000,
+        })) {
+          tokens.push(token);
+        }
+      })();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await consume;
+
+      expect(tokens).toEqual(["fast reply"]);
+      const signal = (slow.stream as ReturnType<typeof vi.fn>).mock.calls[0][3] as AbortSignal;
+      expect(signal.aborted).toBe(true);
+    });
   });
 });

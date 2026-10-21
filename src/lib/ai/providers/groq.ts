@@ -16,10 +16,17 @@ export class GroqProvider implements LLMProvider {
   private getClient() {
     const key = getEnv().GROQ_API_KEY;
     if (!key) throw new Error("GROQ_API_KEY is not configured");
-    return new Groq({ apiKey: key });
+    // The router owns retries and failover; SDK retries would hide a slow or failing provider inside one call
+    return new Groq({ apiKey: key, maxRetries: 0 });
   }
 
-  async complete(system: string, user: string, jsonMode: boolean = false): Promise<ProviderResponse> {
+  async complete(
+    system: string,
+    user: string,
+    jsonMode: boolean = false,
+    _sessionId?: string | null,
+    signal?: AbortSignal
+  ): Promise<ProviderResponse> {
     const groq = this.getClient();
     const model = this.getModel();
 
@@ -34,7 +41,7 @@ export class GroqProvider implements LLMProvider {
       model,
       messages,
       response_format: jsonMode ? { type: "json_object" } : undefined,
-    });
+    }, { signal });
 
     const latencyMs = Date.now() - startTime;
     const rawText = completion.choices[0]?.message?.content || "";
@@ -47,7 +54,12 @@ export class GroqProvider implements LLMProvider {
     };
   }
 
-  async *stream(system: string, messages: LLMMessage[]): AsyncGenerator<string, void, unknown> {
+  async *stream(
+    system: string,
+    messages: LLMMessage[],
+    _sessionId?: string | null,
+    signal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
     const groq = this.getClient();
     const model = this.getModel();
 
@@ -63,7 +75,7 @@ export class GroqProvider implements LLMProvider {
       model,
       messages: formattedMessages,
       stream: true,
-    });
+    }, { signal });
 
     for await (const chunk of responseStream) {
       const delta = chunk.choices[0]?.delta?.content;

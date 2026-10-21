@@ -16,14 +16,14 @@ import { loadSessionResearch } from "@/lib/research";
 import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const chatBodySchema = z.object({
   message: z.string().trim().min(1, "Message cannot be empty").max(4000, "Message is too long"),
 });
 
 // Longer than maxDuration, so a lock left by a killed function always expires
-const LOCK_SEC = 90;
+const LOCK_SEC = 150;
 
 function jsonError(code: ErrorCode, message: string, status: number) {
   return new Response(JSON.stringify({ code, message }), {
@@ -230,6 +230,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
             schema: stanceOutputSchema,
             promptVersion: STANCE_PROMPT_VERSION,
             sessionId,
+            // A small classification; if it is slow, the stance is reported as unavailable rather than delaying `done`
+            timeoutMs: 15_000,
+            budgetMs: 25_000,
           });
           classifiedStance = stanceResult.data.stance;
           await db.execute({

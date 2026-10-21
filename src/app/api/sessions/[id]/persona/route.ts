@@ -11,7 +11,9 @@ import { toErrorResponse, AppError } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rateLimit";
 
 // LLM calls (with failover and one repair retry) can outlast the default serverless timeout.
-export const maxDuration = 60;
+export const maxDuration = 120;
+// The AI failover chain must finish inside maxDuration so a slow provider ends in LLM_UNAVAILABLE, not a platform 504
+const AI_BUDGET_MS = 100_000;
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
@@ -44,6 +46,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     });
 
     const llmResult = await router.complete<PersonaData>({
+      budgetMs: AI_BUDGET_MS,
       purpose: "persona",
       system: systemPrompt,
       user: userPrompt,

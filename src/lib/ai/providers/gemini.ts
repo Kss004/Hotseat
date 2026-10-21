@@ -19,7 +19,13 @@ export class GeminiProvider implements LLMProvider {
     return new GoogleGenerativeAI(key);
   }
 
-  async complete(system: string, user: string, jsonMode: boolean = false): Promise<ProviderResponse> {
+  async complete(
+    system: string,
+    user: string,
+    jsonMode: boolean = false,
+    _sessionId?: string | null,
+    signal?: AbortSignal
+  ): Promise<ProviderResponse> {
     const ai = this.getClient();
     const modelName = this.getModel();
     const model = ai.getGenerativeModel({
@@ -31,7 +37,7 @@ export class GeminiProvider implements LLMProvider {
     const startTime = Date.now();
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: user }] }],
-    });
+    }, { signal });
 
     const latencyMs = Date.now() - startTime;
     const rawText = result.response.text();
@@ -44,7 +50,12 @@ export class GeminiProvider implements LLMProvider {
     };
   }
 
-  async *stream(system: string, messages: LLMMessage[]): AsyncGenerator<string, void, unknown> {
+  async *stream(
+    system: string,
+    messages: LLMMessage[],
+    _sessionId?: string | null,
+    signal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
     const ai = this.getClient();
     const modelName = this.getModel();
     const model = ai.getGenerativeModel({
@@ -60,7 +71,7 @@ export class GeminiProvider implements LLMProvider {
 
     const responseStream = await model.generateContentStream({
       contents,
-    });
+    }, { signal });
 
     for await (const chunk of responseStream.stream) {
       const text = chunk.text();
