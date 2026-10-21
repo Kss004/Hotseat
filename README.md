@@ -2,7 +2,7 @@
 
 Hotseat prepares you for a high-stakes meeting. You give it the counterpart's profile and your meeting context. It builds an editable persona, predicts their objections, suggests strategic questions, plays the counterpart in a live streaming role-play, and then coaches you on clarity, confidence, structure and relevance. The coaching includes a named framework for the hardest pushback you faced, such as a budget objection.
 
-> **Live demo:** https://hotseat-lac.vercel.app · **Demo video:** _add link_
+> **Live demo:** https://hotseat-lac.vercel.app · **Demo videos:** in the Google Drive folder shared with the submission
 >
 > To try it: click **Load Marcus Vance (MD Benchmark)** and follow the demo script in section 6.
 
@@ -63,7 +63,8 @@ Route handlers  /api/sessions[/id]/{persona,scenarios,chat,evaluate,evaluation,e
   ├─ LLM router  (src/lib/ai/router.ts)
   │     OpenCode Go ──fail──▶ Gemini ──fail──▶ Groq ──fail──▶ local OpenAI-compatible (dev) ──fail──▶ LLM_UNAVAILABLE
   │     structured calls: Zod-validate → 1 repair retry with the exact validation error
-  │     streaming: fail over only before the first token, never mid-reply
+  │     time limits: each call is aborted after its timeout and fails over; a per-route budget ends the chain in time
+  │     streaming: fail over only before the first token (or after 20s without one), never mid-reply
   │     every call is logged to llm_calls (provider, model, latency, status)
   │
   └─ libSQL (local SQLite file or Turso): sessions, personas, scenarios, turns, evaluations, llm_calls
@@ -96,7 +97,7 @@ Key files:
 ## 5. Tests
 
 ```bash
-npm test            # 93 Vitest cases across 12 files
+npm test            # 96 Vitest cases across 12 files
 npm run typecheck
 npm run build
 npm run llm:smoke   # live check of your OpenCode/Gemini/Groq keys and model IDs
@@ -107,7 +108,7 @@ Route-level tests call the real handlers against a separate `data/test.db`, with
 - **Chat:** turn cap, a session that has ended, invalid bodies, rollback on provider failure.
 - **Evaluate:** `INSUFFICIENT_TURNS`, a deliberately fabricated quote in the fixture being dropped, the score computed in code.
 - **Persona:** edits persist through a reload.
-- **Router:** failover, repair retry, no switching providers mid-stream.
+- **Router:** failover, repair retry, no switching providers mid-stream, per-call timeouts that abort and fail over, the time budget ending in `LLM_UNAVAILABLE`, and a stream failing over when no first token arrives.
 - **OpenCode Go provider:** endpoint, bearer auth, the required `x-opencode-session` header, streamed content only, config errors.
 - **LinkedIn scraper:** SSRF guard, the sign-in wall, LinkedIn's 999 bot block.
 - **Recent sessions:** the browser-only list adds, updates and forgets sessions, keeps at most 10, and ignores invalid or corrupted storage without throwing.
@@ -151,7 +152,7 @@ A local SQLite file doesn't persist on serverless hosts, so use a [Turso](https:
 3. Add environment variables: at least one provider key with its model ID (see section 1), `DATABASE_URL`, and `DATABASE_AUTH_TOKEN`. Leave `LLM_MODE` unset or `live`.
 4. Deploy. Tables are created on the first request. Then run the demo script on the live URL.
 
-Long AI routes declare their own time limits (`maxDuration`: 60s, and 120s for evaluation).
+Long AI routes declare their own time limits (`maxDuration`: 120s, and 180s for evaluation). Inside that, each AI call is aborted after 30s (75s for evaluation) and the router fails over, with a total budget that leaves room for the route to answer, so a slow provider ends in the app's own `LLM_UNAVAILABLE` retry state rather than a platform timeout.
 
 The live instance runs exactly this setup: Vercel (Washington, D.C.) with a Turso database in AWS US East, and OpenCode Go as the primary model. The full Marcus Vance demo was run there end to end on 2026-10-20: the evaluation finished in under a minute, and the report reloaded from the database.
 

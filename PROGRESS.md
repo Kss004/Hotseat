@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-20 (`npm test` 93/93, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-21 (`npm test` 96/96, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
 
 ---
 
