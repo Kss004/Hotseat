@@ -159,3 +159,27 @@ The live instance runs exactly this setup: Vercel (Washington, D.C.) with a Turs
 Two setup mistakes to avoid:
 - `DATABASE_AUTH_TOKEN` must be a **database** token (the database page → Create Token), not a Platform API token from Settings → API Tokens. The wrong one shows up as `LibsqlError: SERVER_ERROR: Server returned HTTP status 401` in the Vercel logs.
 - Environment variables only take effect after a redeploy.
+
+## 9. Hotseat Floor: morning practice calls over the phone (Bolna)
+
+Built for the Bolna Symphony Buildathon. Every morning, a Bolna voice agent calls each rep on the floor as a skeptical buyer in that rep's own deal. Hotseat prepares each call, scores it with the same quote-verified evaluator as the text coach, and shows the manager which objection categories the floor handles worst.
+
+**Who does what**
+- **Bolna:** phone numbers, dialling, speech-to-text (Sarvam), the live conversation, text-to-speech, batch scheduling.
+- **Hotseat:** the rep roster and consent, a fresh buyer persona and objection bank per call, a fixed plan of one objection per category, transcript ingestion, scoring, the floor dashboard and each rep's report.
+
+**Flow**
+1. The manager adds reps (name, mobile, deal notes, how they consented) and describes what the team sells at `/floor`.
+2. A run creates one session per rep and queues a prep job: persona → scenarios → objection plan → one-line call brief.
+3. Launch sends one Bolna batch: a CSV with `contact_number, rep_name, buyer_name, buyer_company, call_brief, hotseat_call_id`, filled into a single agent's prompt. Calls only go out 09:00–21:00 IST (agent calling guardrails).
+4. Bolna posts status updates to `/api/floor/webhook?token=…`. Bolna doesn't sign webhooks, so the body is used only for the execution id; the execution is re-fetched from Bolna's API before anything is stored. A sweep of the batch's executions catches lost webhooks.
+5. A completed call's transcript is stored verbatim as session turns and scored. The evaluator now scores **every objection the buyer raised** (`handling_score` 1–10 with verified evidence quotes; an unanswered objection is 1 by rule).
+6. The dashboard shows the mean handling score per category with its sample size. A category is called the weakest only with 3+ scored objections. Calls that didn't connect, were too short (under 2 rep turns) or couldn't be scored are listed with the reason, never estimated.
+
+**Background work.** Prep and scoring run in a job queue in the database (`floor_jobs`), claimed with a lease, retried up to 3 times for provider outages. The queue is worked by the manager screen while it is open (`/api/floor/tick`), by the webhook for the call it just ingested, and by a daily Vercel Cron (`vercel.json`, 02:00 UTC) that also keeps the next morning's run queued when the daily schedule is on.
+
+**Access.** `/floor` needs `MANAGER_PASSWORD` (signed, HTTP-only cookie). Reps get signed report links (`/floor/report/<token>`) that open only their own call. There is still no public listing of sessions.
+
+**Settings** (see `.env.example`): `BOLNA_API_KEY`, the agent's voice stack (`BOLNA_LLM_*`, `BOLNA_STT_*`, `BOLNA_TTS_*`, `BOLNA_TELEPHONY_PROVIDER`), `PUBLIC_BASE_URL`, `BOLNA_WEBHOOK_SECRET`, `MANAGER_PASSWORD`, `APP_SECRET`, `CRON_SECRET`. The agent is created on first launch and updated whenever its prompt or voice settings change.
+
+**Consent and conduct.** Only reps who agreed in writing are added; the consent note is stored and reps can opt out or be deleted with all their data. The agent says it is an AI practice buyer and that the call is recorded before anything else, stops on "stop", and is blunt but never abusive (Bolna's acceptable-use policy).

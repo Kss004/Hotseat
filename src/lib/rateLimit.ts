@@ -17,6 +17,10 @@ const BUCKETS = {
   end: { limit: 30, windowSec: 3600, usesLlm: false },
   "linkedin-fetch": { limit: 20, windowSec: 3600, usesLlm: false },
   read: { limit: 300, windowSec: 3600, usesLlm: false },
+  // Hotseat Floor: manager routes poll while calls run; AI work happens in the job queue, not per request
+  floor: { limit: 1500, windowSec: 3600, usesLlm: false },
+  // Bolna posts several status updates per call
+  "floor-webhook": { limit: 3000, windowSec: 3600, usesLlm: false },
 } as const satisfies Record<string, { limit: number; windowSec: number; usesLlm: boolean }>;
 
 export type RateLimitBucket = keyof typeof BUCKETS;
@@ -87,7 +91,8 @@ export async function enforceRateLimit(req: Request, bucket: RateLimitBucket): P
   if (env.RATE_LIMIT === "off") return;
 
   const ipHash = hashIp(clientIp(req));
-  const burst = await hit(`burst:${ipHash}`, BURST.windowSec);
+  // Bolna's few webhook IPs report every call of a batch at once, so they skip the per-IP burst limit
+  const burst = bucket === "floor-webhook" ? { count: 0, resetAt: 0 } : await hit(`burst:${ipHash}`, BURST.windowSec);
   if (burst.count > BURST.limit) {
     throw tooMany("You're sending requests too quickly. Please wait a few seconds and try again.", burst.resetAt);
   }

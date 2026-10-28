@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { getReadyDb } from "@/lib/db";
-import { getLLMRouter } from "@/lib/ai/router";
-import {
-  getPersonaSystemPrompt,
-  getPersonaUserPrompt,
-  PERSONA_PROMPT_VERSION,
-} from "@/lib/ai/prompts/persona";
-import { personaSchema, type PersonaData } from "@/types";
+import { personaSchema } from "@/types";
+import { generatePersona } from "@/lib/pipeline";
 import { toErrorResponse, AppError } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rateLimit";
 
@@ -18,102 +13,8 @@ const AI_BUDGET_MS = 100_000;
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     await enforceRateLimit(req, "persona-generate");
-    const sessionId = params.id;
-    const db = await getReadyDb();
-
-    // 1. Fetch session
-    const sessionRes = await db.execute({
-      sql: `SELECT id, raw_input, target_url, meeting_context FROM sessions WHERE id = ?`,
-      args: [sessionId],
-    });
-
-    if (sessionRes.rows.length === 0) {
-      throw new AppError("NOT_FOUND", "Session not found", 404);
-    }
-
-    const s = sessionRes.rows[0];
-    const rawInput = s.raw_input as string;
-    const targetUrl = s.target_url as string | null;
-    const meetingContext = JSON.parse(s.meeting_context as string);
-
-    // 2. Call LLM Router
-    const router = getLLMRouter();
-    const systemPrompt = getPersonaSystemPrompt();
-    const userPrompt = getPersonaUserPrompt({
-      rawInput,
-      targetUrl,
-      meetingContext,
-    });
-
-    const llmResult = await router.complete<PersonaData>({
-      budgetMs: AI_BUDGET_MS,
-      purpose: "persona",
-      system: systemPrompt,
-      user: userPrompt,
-      schema: personaSchema,
-      promptVersion: PERSONA_PROMPT_VERSION,
-      sessionId,
-    });
-
-    const persona = llmResult.data;
-    const personaId = `pers_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-    // 3. Upsert into personas table (RETURNING gives the stored id, which differs from personaId on regenerate)
-    const saved = await db.execute({
-      sql: `INSERT INTO personas (
-              id, session_id, name, title, company, background,
-              risk_posture, technical_depth, business_priorities,
-              hot_buttons, conversational_style, uncertain_fields, edited_by_user
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-            ON CONFLICT(session_id) DO UPDATE SET
-              name = excluded.name,
-              title = excluded.title,
-              company = excluded.company,
-              background = excluded.background,
-              risk_posture = excluded.risk_posture,
-              technical_depth = excluded.technical_depth,
-              business_priorities = excluded.business_priorities,
-              hot_buttons = excluded.hot_buttons,
-              conversational_style = excluded.conversational_style,
-              uncertain_fields = excluded.uncertain_fields,
-              edited_by_user = 0,
-              updated_at = CURRENT_TIMESTAMP
-            RETURNING id`,
-      args: [
-        personaId,
-        sessionId,
-        persona.name,
-        persona.title,
-        persona.company,
-        persona.background,
-        persona.risk_posture,
-        persona.technical_depth,
-        JSON.stringify(persona.business_priorities),
-        JSON.stringify(persona.hot_buttons),
-        persona.conversational_style,
-        JSON.stringify(persona.uncertain_fields || []),
-      ],
-    });
-
-    // 4. Update session status
-    await db.execute({
-      sql: `UPDATE sessions SET status = 'persona_ready' WHERE id = ?`,
-      args: [sessionId],
-    });
-
-    return NextResponse.json({
-      ok: true,
-      persona: {
-        id: saved.rows[0].id as string,
-        session_id: sessionId,
-        ...persona,
-        edited_by_user: false,
-        updated_at: new Date().toISOString(),
-      },
-      provider: llmResult.provider,
-      model: llmResult.model,
-    });
+    const result = await generatePersona(params.id, AI_BUDGET_MS);
+    return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const errResp = toErrorResponse(err);
     return NextResponse.json(errResp.body, { status: errResp.status });

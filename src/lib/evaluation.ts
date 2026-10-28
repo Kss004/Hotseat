@@ -47,8 +47,14 @@ export function postValidateEvaluation(data: EvaluationOutput, userTurns: Turn[]
 
   const objectionPlaybook = data.objection_playbook.map((entry) => {
     const turn = entry.user_turn_number !== null ? byNumber.get(entry.user_turn_number) : undefined;
+    const rawEvidence = entry.evidence || [];
+    const keptEvidence = filterValidQuotes(rawEvidence, userTurnTexts);
+    droppedQuotes += rawEvidence.length - keptEvidence.length;
     return {
       ...entry,
+      // An objection the user never answered is scored 1 by rule, whatever the model said
+      handling_score: turn ? entry.handling_score : 1,
+      evidence: keptEvidence,
       user_turn_number: turn ? turn.turn_number : null,
       user_turn_index: turn ? userIndex.get(turn.turn_number) ?? null : null,
       user_said: turn ? turn.content : null,

@@ -46,7 +46,11 @@
         "Prove: offer the 60-day sandbox as the measurement, with a success metric he chooses.",
         "Commit: ask for the one decision needed to start the pilot."
       ],
-      "example_response": "You're right that you pass audit today. The question is what it costs you each cycle in [team hours on evidence gathering]. The 60-day sandbox is designed to measure that number against your current process, and if it doesn't move, you walk away. Can we agree on the metric before we leave the room?"
+      "example_response": "You're right that you pass audit today. The question is what it costs you each cycle in [team hours on evidence gathering]. The 60-day sandbox is designed to measure that number against your current process, and if it doesn't move, you walk away. Can we agree on the metric before we leave the room?",
+      "handling_score": 5,
+      "evidence": [
+        "we plug into your current infrastructure for a 60-day sandbox"
+      ]
     }
   ],
   "cheat_sheet": {

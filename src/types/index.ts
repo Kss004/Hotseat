@@ -176,6 +176,10 @@ export const objectionPlaybookEntrySchema = z.object({
   framework_name: z.string().min(1),
   framework_steps: z.array(z.string().min(1)).min(3).max(5),
   example_response: z.string().min(1),
+  // How well the user handled this objection (1-10). Code forces 1 when the user never answered it
+  handling_score: z.number().int().min(1).max(10),
+  // 0-2 verbatim quotes from the user's answer; dropped in code unless found inside one user turn
+  evidence: z.array(z.string()).max(2).default([]),
 });
 
 export const evaluationOutputSchema = z.object({
@@ -204,8 +208,8 @@ export const evaluationOutputSchema = z.object({
     })
   ).min(2),
 
-  // Framework coaching for the hardest pushback the persona raised (e.g. budget/ROI, security)
-  objection_playbook: z.array(objectionPlaybookEntrySchema).min(1).max(3),
+  // One entry per distinct objection the persona raised, each scored, with framework coaching
+  objection_playbook: z.array(objectionPlaybookEntrySchema).min(1).max(6),
 
   cheat_sheet: z.object({
     top_talking_points: z.array(z.string()).min(1),
@@ -280,7 +284,13 @@ export interface EvaluationRecord {
     critique: string;
     gold_standard: string;
   }[];
-  objection_playbook: (ObjectionPlaybookEntry & { user_said: string | null; user_turn_index?: number | null })[];
+  // handling_score and evidence are optional because evaluations stored before prompt v1.2 lack them
+  objection_playbook: (Omit<ObjectionPlaybookEntry, "handling_score" | "evidence"> & {
+    handling_score?: number;
+    evidence?: string[];
+    user_said: string | null;
+    user_turn_index?: number | null;
+  })[];
   cheat_sheet: {
     top_talking_points: string[];
     defense_shields: string[];

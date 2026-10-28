@@ -104,6 +104,75 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   window_start INTEGER NOT NULL,
   count INTEGER NOT NULL
 );
+
+-- Hotseat Floor (Step 8): the manager's roster of reps who consented to morning practice calls
+CREATE TABLE IF NOT EXISTS floor_reps (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone_e164 TEXT NOT NULL UNIQUE,
+  deal_notes TEXT NOT NULL,
+  consent_at TEXT NOT NULL,
+  consent_note TEXT NOT NULL,
+  opted_out_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One morning of calls for the whole floor (one Bolna batch)
+CREATE TABLE IF NOT EXISTS floor_runs (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  scheduled_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'preparing',
+  bolna_batch_id TEXT,
+  auto_launch INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  product_summary TEXT NOT NULL,
+  goal TEXT NOT NULL
+);
+
+-- One rep's call within a run. Each call gets its own Hotseat session (persona, objections, turns, evaluation)
+CREATE TABLE IF NOT EXISTS floor_calls (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES floor_runs(id) ON DELETE CASCADE,
+  rep_id TEXT NOT NULL REFERENCES floor_reps(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  prep_status TEXT NOT NULL DEFAULT 'pending',
+  prep_error TEXT,
+  objection_plan TEXT NOT NULL DEFAULT '[]',
+  call_brief TEXT,
+  bolna_execution_id TEXT UNIQUE,
+  call_status TEXT NOT NULL DEFAULT 'not_started',
+  termination_reason TEXT,
+  duration_sec REAL,
+  recording_url TEXT,
+  transcript TEXT,
+  eval_status TEXT NOT NULL DEFAULT 'waiting',
+  eval_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (run_id, rep_id)
+);
+
+-- Background work (preparing calls, scoring calls), claimed with a lease so two workers never run the same job
+CREATE TABLE IF NOT EXISTS floor_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  ref_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  run_after INTEGER NOT NULL DEFAULT 0,
+  locked_until INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (kind, ref_id)
+);
+
+-- Floor-wide settings (what the team sells, the Bolna agent id, etc.)
+CREATE TABLE IF NOT EXISTS floor_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 // Additive column migrations for tables that already exist. Applied only when the column is missing.
@@ -118,5 +187,11 @@ export const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: stri
     table: "sessions",
     column: "streaming_until",
     ddl: "ALTER TABLE sessions ADD COLUMN streaming_until INTEGER",
+  },
+  {
+    // 1 = a scheduled morning run that launches itself once every call is prepared
+    table: "floor_runs",
+    column: "auto_launch",
+    ddl: "ALTER TABLE floor_runs ADD COLUMN auto_launch INTEGER NOT NULL DEFAULT 0",
   },
 ];

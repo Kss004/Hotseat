@@ -1,6 +1,6 @@
 import type { PersonaData, MeetingContext, Turn } from "@/types";
 
-export const EVALUATE_PROMPT_VERSION = "v1.1";
+export const EVALUATE_PROMPT_VERSION = "v1.2";
 
 export function getEvaluateSystemPrompt(persona: PersonaData, meeting: MeetingContext): string {
   return `You are a premier executive communications coach and master deal strategist.
@@ -45,7 +45,7 @@ CRITICAL EVIDENCE & REWRITE RULES:
 1. For every dimension, provide 1 to 3 EXACT quotes from the user's turns as evidence. Every quote MUST be an exact verbatim substring from the user's transcript. Do NOT alter words or invent quotes.
 2. For scores 8 or above, at least one verbatim evidence quote is strictly mandatory.
 3. Select the 2 to 3 weakest user turns and supply a turn_rewrite: specify the exact turn_number (must match a user message index), a critique of why it fell short with this specific persona, and a 'gold_standard' script demonstrating what the user should have said instead.
-4. objection_playbook (1 to 3 entries): pick the hardest pushback ${persona.name} raised in the transcript (budget/ROI and security/compliance first if they came up). For each:
+4. objection_playbook (1 to 6 entries): one entry for EVERY distinct objection or pushback ${persona.name} raised, in the order raised (merge repeats of the same concern; at most 6). For each:
    - objection: the pushback in one sentence, as the persona framed it
    - category: one of "Risk/Compliance/Security", "ROI/Financial", "Implementation", "Status Quo/Vendor"
    - user_turn_number: the USER turn that answered it, or null if the user never answered it
@@ -53,6 +53,8 @@ CRITICAL EVIDENCE & REWRITE RULES:
    - framework_name: a short named framework suited to this objection type (e.g. "Acknowledge, Quantify, Prove, Commit" for budget; "Control, Evidence, Contract" for security)
    - framework_steps: 3 to 5 steps, each one line, describing how to apply the framework to THIS persona
    - example_response: a 2 to 4 sentence answer applying the framework, using only facts from the meeting context or the user's own claims. Do not invent product capabilities, certifications or numbers.
+   - handling_score (1 to 10): how well the user handled THIS objection. 1-3: dodged, ignored or never answered. 4-6: answered generically, no evidence or tailoring. 7-8: addressed the specific concern with evidence. 9-10: resolved it, quantified, and moved the deal forward.
+   - evidence: 0 to 2 EXACT verbatim quotes from the user's answer to this objection (same rule as dimension evidence).
 5. Gold-standard rewrites follow the same rule: no invented product facts; where a number is needed, write a placeholder like [your payback period].
 6. Provide a 5-minute pre-meeting cheat sheet with:
    - top_talking_points (3 key messages)
@@ -109,7 +111,9 @@ Evaluate the user's performance and output the complete evaluation JSON:
       "what_went_wrong": string,
       "framework_name": string,
       "framework_steps": string[] (3-5),
-      "example_response": string
+      "example_response": string,
+      "handling_score": number (1-10),
+      "evidence": string[] (0-2 verbatim substrings from USER turns)
     }
   ],
   "cheat_sheet": {

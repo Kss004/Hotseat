@@ -6,7 +6,8 @@ import type { EvaluationRecord, PersonaRecord } from "@/types";
 interface AnalyticsReportProps {
   evaluation: EvaluationRecord;
   persona: PersonaRecord;
-  onNewSession: () => void;
+  // Omitted on Hotseat Floor rep reports, which have no "new session" flow
+  onNewSession?: () => void;
 }
 
 export function AnalyticsReport({ evaluation, persona, onNewSession }: AnalyticsReportProps) {
@@ -65,7 +66,7 @@ ${d.evidence.length > 0 ? d.evidence.map((q) => `  > "${q}"`).join("\n") : "  _N
 ## Objection Playbook
 ${playbook
   .map(
-    (o) => `### ${o.objection} (${o.category})
+    (o) => `### ${o.objection} (${o.category})${o.handling_score ? ` - handled ${o.handling_score}/10` : ""}
 ${o.user_said ? `**Your answer:** "${o.user_said}"` : "**You did not answer this objection.**"}
 **What went wrong:** ${o.what_went_wrong}
 **Framework: ${o.framework_name}**
@@ -166,9 +167,11 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
           <button className="btn btn-secondary" onClick={handlePrint} id="btn-print-cheatsheet">
             🖨️ Print Cheat Sheet
           </button>
-          <button className="btn btn-primary" onClick={onNewSession} id="btn-start-new-session">
-            + New Preparation
-          </button>
+          {onNewSession && (
+            <button className="btn btn-primary" onClick={onNewSession} id="btn-start-new-session">
+              + New Preparation
+            </button>
+          )}
         </div>
       </div>
 
@@ -322,14 +325,14 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
         </div>
       </div>
 
-      {/* Objection Playbook: framework coaching for the hardest pushback (PRD: a better framework for budget concerns) */}
+      {/* Objection Playbook: every objection raised, scored, with framework coaching */}
       {playbook.length > 0 && (
         <div style={{ marginBottom: "2.5rem" }}>
           <h2 style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--accent-cyan)" }}>
             Objection Playbook: Handling the Hard Questions
           </h2>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", marginBottom: "1rem" }}>
-            The toughest pushback {persona.name} raised, what your answer was missing, and a framework to use next time.
+            The pushback {persona.name} raised, how well you handled each one, what was missing, and a framework to use next time.
           </p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
@@ -338,6 +341,14 @@ ${evaluation.cheat_sheet.killer_questions.map((q) => `- ${q}`).join("\n")}
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.6rem" }}>
                   <span className="badge badge-blue">{entry.category}</span>
                   <h4 style={{ fontSize: "1rem", fontWeight: 700 }}>&ldquo;{entry.objection}&rdquo;</h4>
+                  {typeof entry.handling_score === "number" && (
+                    <span
+                      className="badge"
+                      style={{ color: getScoreColor(entry.handling_score), borderColor: getScoreColor(entry.handling_score) }}
+                    >
+                      Handled {entry.handling_score}/10
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.9rem" }}>

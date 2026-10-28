@@ -1,7 +1,7 @@
 # PROGRESS.md - Project Tracking & Status
 
 Source of truth for implementation status. An item is checked only when the cited evidence exists and was run.
-Last verified: 2026-10-21 (`npm test` 96/96, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys).
+Last verified: 2026-10-28 (`npm test` 108/108, `npm run typecheck` clean, `npm run build` clean, live browser run with real keys on 2026-10-20; Hotseat Floor not yet run against live Bolna).
 
 ---
 
@@ -86,3 +86,18 @@ Last verified: 2026-10-21 (`npm test` 96/96, `npm run typecheck` clean, `npm run
 
 ## Step 7: Stretch - Voice
 - [x] Web Speech API detection; dictation into the chat input; TTS for persona replies; text-only fallback
+
+## Step 8: Hotseat Floor - Bolna Voice Batch (Symphony Buildathon)
+Each morning a Bolna agent calls every rep on the floor as a skeptical buyer in that rep's own deal. Hotseat prepares each call (persona plus a fixed four-category objection plan), ingests the transcript, scores it with the existing quote-verified evaluator, and rolls results up for the manager. Bolna owns telephony, speech and scheduling; Hotseat owns everything else. Nothing is scored without a real call: failed or short calls show as not scored, with the reason.
+- [x] Data model: `floor_reps`, `floor_runs`, `floor_calls`, `floor_jobs`, `floor_settings` (idempotent; `auto_launch` also as an additive column migration)
+- [x] Manager login (password from env, signed HTTP-only cookie); rep report links are signed tokens; no public listing routes (`tests/floor.test.ts` #7, #8; tampered link returned 404 in the browser)
+- [x] Job queue in the database: prep and scoring claimed with a lease, retried up to 3 times, failures recorded with the reason (`tests/floor.test.ts` #12)
+- [x] Voice prompt: discloses AI and recording first, short replies, blunt but never abusive, stop word ends the call (`tests/floor.test.ts` #3)
+- [x] Per-objection `handling_score` with verified evidence (unanswered = 1 by rule), evaluate prompt v1.2; one objection per category planned for every call (`tests/floor.test.ts` #2, #6)
+- [ ] Bolna agent created/updated through the API (Sarvam speech-to-text); batch created and scheduled through the API (built and tested against a mock; needs a live check with a real key)
+- [x] Webhook: execution re-fetched from Bolna before anything is stored (a forged transcript in the body is ignored); idempotent; wrong token, wrong batch and unknown executions rejected; short and no-answer calls not scored (`tests/floor.test.ts` #9–#11, against a mocked Bolna API)
+- [x] Manager UI: roster with consent, run setup, live call status, floor dashboard by category and rep, drill-down to quotes; checked in the browser on replay data, including the rep report at phone width
+- [ ] Daily schedule: next run prepared and scheduled for 09:00 IST (built; slot maths tested in #5; needs a live check)
+- [x] Tests for transcript parsing, webhook ingest, scoring, aggregation, auth (`tests/floor.test.ts`, 12 cases; suite 108/108)
+- [ ] Live: one real call end to end (transcript, score, dashboard)
+- [ ] Live: full batch run with consenting reps

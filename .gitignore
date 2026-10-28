@@ -46,3 +46,9 @@ yarn-error.log*
 # Submission archives are built locally and never committed
 *.zip
 submission/
+
+.vercel
+.env*
+
+# Promo material from the brag tool; kept locally, never committed
+brag-output/

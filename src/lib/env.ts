@@ -25,6 +25,39 @@ export const envSchema = z.object({
   TAVILY_API_KEY: z.string().trim().default(""),
   // Live research runs per UTC day across all visitors (cache hits don't count), to protect the Tavily plan's credits
   RESEARCH_DAILY_LIMIT: z.coerce.number().int().min(1).default(30),
+
+  // --- Hotseat Floor (Bolna voice batch). Empty BOLNA_API_KEY = floor calling off ---
+  BOLNA_API_KEY: z.string().trim().default(""),
+  BOLNA_API_URL: z.string().url().default("https://api.bolna.ai"),
+  // Optional: reuse an agent made earlier; otherwise the app creates one and remembers its id
+  BOLNA_AGENT_ID: z.string().trim().default(""),
+  // Optional caller ID in E.164; empty = the account's default number
+  BOLNA_FROM_NUMBER: z.string().trim().default(""),
+  // The agent's own voice stack. Model and voice IDs come only from here (see .env.example)
+  BOLNA_LLM_PROVIDER: z.string().trim().default(""),
+  BOLNA_LLM_MODEL: z.string().trim().default(""),
+  BOLNA_STT_PROVIDER: z.string().trim().default(""),
+  BOLNA_STT_MODEL: z.string().trim().default(""),
+  BOLNA_STT_LANGUAGE: z.string().trim().default(""),
+  BOLNA_TTS_PROVIDER: z.string().trim().default(""),
+  BOLNA_TTS_MODEL: z.string().trim().default(""),
+  BOLNA_TTS_VOICE: z.string().trim().default(""),
+  BOLNA_TTS_VOICE_ID: z.string().trim().default(""),
+  BOLNA_TTS_LANGUAGE: z.string().trim().default(""),
+  BOLNA_TELEPHONY_PROVIDER: z.string().trim().default("plivo"),
+  // Longest a practice call may run, in seconds
+  FLOOR_MAX_CALL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
+  // Hour (IST) the morning calls start; TRAI allows 9 to 21
+  FLOOR_CALL_HOUR_IST: z.coerce.number().int().min(9).max(20).default(9),
+  // Public https address of this app, used for the Bolna webhook (e.g. https://hotseat.vercel.app)
+  PUBLIC_BASE_URL: z.string().trim().default(""),
+  // Shared secret in the webhook URL; the execution is then re-fetched from Bolna before anything is stored
+  BOLNA_WEBHOOK_SECRET: z.string().trim().default(""),
+  // Manager login for /floor, and the key that signs login cookies and rep report links
+  MANAGER_PASSWORD: z.string().default(""),
+  APP_SECRET: z.string().default(""),
+  // Vercel Cron sends "Authorization: Bearer <CRON_SECRET>"
+  CRON_SECRET: z.string().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

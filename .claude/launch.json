@@ -87,6 +87,25 @@
         "RATE_LIMIT": "on",
         "TAVILY_API_KEY": "replay-placeholder"
       }
+    },
+    {
+      "name": "hotseat-floor-replay",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "env": {
+        "LLM_MODE": "replay",
+        "DATABASE_URL": "file:./data/floor-e2e.db",
+        "MANAGER_PASSWORD": "local-floor-test",
+        "APP_SECRET": "local-floor-test-secret-0123456789",
+        "BOLNA_API_KEY": ""
+      }
     }
   ]
 }

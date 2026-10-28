@@ -8,6 +8,9 @@ export type ErrorCode =
   | "SESSION_ENDED"
   | "RATE_LIMITED"
   | "BUSY"
+  | "UNAUTHORIZED"
+  | "NOT_CONFIGURED"
+  | "BOLNA_ERROR"
   | "INTERNAL_ERROR";
 
 export class AppError extends Error {
